@@ -20,8 +20,6 @@ async function apiCall(url, apiKey, method = "GET", body = null) {
 
 function buildPrompt(payload, isResume) {
   if (isResume) {
-    // On resume, the CLI session already has the prior context.
-    // Just pass the new human messages since the last agent message.
     const activity = payload.run.activity || [];
     const lastAgentIdx = activity.findLastIndex(a => a.author_type === "agent");
     const newMessages = lastAgentIdx >= 0 ? activity.slice(lastAgentIdx + 1) : activity;
@@ -33,7 +31,6 @@ function buildPrompt(payload, isResume) {
     return `The human has responded to your previous work. Here is their message:\n\n${humanMessages}\n\nContinue working on this task based on their response.`;
   }
 
-  // New run: build full context prompt
   let prompt = "";
 
   if (payload.job?.name) {
@@ -43,7 +40,6 @@ function buildPrompt(payload, isResume) {
     prompt += `## Instructions\n\n${payload.job.instructions}\n\n`;
   }
 
-  // Include docs
   if (payload.docs?.length > 0) {
     prompt += `## Reference Documents\n\n`;
     for (const doc of payload.docs) {
@@ -51,7 +47,6 @@ function buildPrompt(payload, isResume) {
     }
   }
 
-  // Include database data
   if (payload.data && Object.keys(payload.data).length > 0) {
     prompt += `## Reference Data\n\n`;
     for (const [name, rows] of Object.entries(payload.data)) {
@@ -64,7 +59,6 @@ function buildPrompt(payload, isResume) {
     }
   }
 
-  // Include prior activity if any
   const activity = payload.run.activity || [];
   if (activity.length > 0) {
     prompt += `## Activity Log\n\n`;
@@ -73,7 +67,6 @@ function buildPrompt(payload, isResume) {
     }
   }
 
-  // Pre-run check
   if (payload.job?.check) {
     prompt += `## Pre-run Check\n\nBefore starting, run this command: \`${payload.job.check}\`\nIf it returns non-zero, skip this run by setting status to "skipped".\n\n`;
   }
@@ -126,10 +119,54 @@ async function runSingleAgent(runner) {
   const workingDir = ensureWorkingDir(agentName);
   const cmd = provider.buildCommand(prompt, model, workingDir, sessionId, isNewSession);
 
-  // Execute CLI tool
+  // Batch streaming events and flush to Harbour periodically
+  let eventBatch = [];
+  let flushTimer = null;
+  const FLUSH_INTERVAL = 750; // ms
+
+  async function flushEvents() {
+    if (eventBatch.length === 0) return;
+    const batch = eventBatch;
+    eventBatch = [];
+    try {
+      await apiCall(`${url}/api/runs/${runId}/output`, apiKey, "POST", batch);
+    } catch (err) {
+      console.error(`  [${agentName}] Failed to stream output: ${err.message}`);
+    }
+  }
+
+  function queueEvent(evt) {
+    eventBatch.push(evt);
+    if (!flushTimer) {
+      flushTimer = setTimeout(async () => {
+        flushTimer = null;
+        await flushEvents();
+      }, FLUSH_INTERVAL);
+    }
+  }
+
+  // Line handler: parse each JSONL line from the CLI tool
+  function onLine(line) {
+    if (!provider.parseLine) return;
+    const parsed = provider.parseLine(line);
+    if (!parsed) return;
+
+    // Capture session ID from init events
+    if (parsed.sessionId && !sessionId) {
+      sessionId = parsed.sessionId;
+    } else if (parsed.sessionId) {
+      sessionId = parsed.sessionId;
+    }
+
+    for (const evt of parsed.events) {
+      queueEvent(evt);
+    }
+  }
+
+  // Execute CLI tool with streaming
   let result;
   try {
-    result = await runCliTool(cmd.binary, cmd.args, cmd.cwd);
+    result = await runCliTool(cmd.binary, cmd.args, cmd.cwd, { onLine });
   } catch (err) {
     console.error(`  [${agentName}] CLI execution failed: ${err.message}`);
     try {
@@ -141,7 +178,14 @@ async function runSingleAgent(runner) {
     return;
   }
 
-  // Parse result — for Claude, pass the pre-generated sessionId
+  // Flush any remaining buffered events
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  await flushEvents();
+
+  // Parse final result for activity summary
   const parsed = provider.parseResult(result.stdout, sessionId);
   const output = parsed.content || result.stdout || result.stderr || "(no output)";
   const newSessionId = parsed.sessionId || sessionId;
@@ -157,13 +201,12 @@ async function runSingleAgent(runner) {
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
     } catch { /* best effort */ }
 
-    // Clean up session on failure
     delete sessions[runId];
     saveSessions(sessions);
     return;
   }
 
-  // Post output as activity
+  // Post output as activity (high-level summary)
   const truncatedOutput = output.length > 50000 ? output.slice(-50000) : output;
   try {
     await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
@@ -173,17 +216,20 @@ async function runSingleAgent(runner) {
     console.error(`  [${agentName}] Failed to post activity: ${err.message}`);
   }
 
-  // Mark as done. Harbour agents complete runs in a single pass.
-  // Human-in-the-loop (waiting) is handled by external agents that call the API directly.
+  // Mark as done
   const status = "done";
-
   try {
     await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status });
   } catch (err) {
     console.error(`  [${agentName}] Failed to update status: ${err.message}`);
   }
 
-  // Clean up session on completion
+  // Save session for potential resume, clean up on completion
+  if (newSessionId) {
+    sessions[runId] = { sessionId: newSessionId, cli };
+    saveSessions(sessions);
+  }
+
   delete sessions[runId];
   saveSessions(sessions);
   console.log(`  [${agentName}] Run ${runId} completed with status: ${status}`);
@@ -198,13 +244,11 @@ export async function runAgents() {
 
   console.log(`Polling ${runners.length} harbour agent(s)...`);
 
-  // Poll all agents first (fast), collect work
   const work = [];
   for (const runner of runners) {
     work.push(runSingleAgent(runner));
   }
 
-  // Run all in parallel
   await Promise.allSettled(work);
 
   console.log("Done.");
