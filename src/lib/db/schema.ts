@@ -237,4 +237,16 @@ export function initializeSchema(db: Database.Database) {
       if (normalized) update.run(normalized, row.id);
     }
   }
+
+  // Migrations: add type, cli, model columns to agents table for harbour agents
+  const agentCols = db.prepare(`PRAGMA table_info(agents)`).all() as any[];
+  if (!agentCols.some((c: any) => c.name === "type")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN type TEXT NOT NULL DEFAULT 'external'`);
+  }
+  if (!agentCols.some((c: any) => c.name === "cli")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN cli TEXT`);
+  }
+  if (!agentCols.some((c: any) => c.name === "model")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN model TEXT`);
+  }
 }

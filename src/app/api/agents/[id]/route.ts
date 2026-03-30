@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthFromRequest, requireAuth } from "@/lib/auth";
 import { getAgentById, updateAgent, deleteAgent } from "@/lib/db/queries";
+import { removeRunnerConfig } from "@/lib/runners";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await getAuthFromRequest(req);
@@ -36,6 +37,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   }
 
   const { id } = await params;
+  const agent = getAgentById(id);
   deleteAgent(id);
+  if (agent?.type === "harbour") {
+    removeRunnerConfig(id);
+  }
   return NextResponse.json({ ok: true });
 }

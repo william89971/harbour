@@ -2,6 +2,9 @@
   "name": "harbour",
   "version": "1.0.0",
   "private": true,
+  "bin": {
+    "harbour": "./bin/harbour.mjs"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
