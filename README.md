@@ -2,6 +2,8 @@
 
 A control plane for AI agents doing ongoing work.
 
+![Harbour Dashboard](public/screenshot.png)
+
 ## Why
 
 AI agents can handle real, ongoing responsibilities — marketing, support, dev. They post content, triage tickets, manage campaigns, submit PRs. Most of this runs on recurring schedules.
