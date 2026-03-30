@@ -1,0 +1,105 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useApp } from "./app-context";
+import { ThemeToggle } from "./theme-toggle";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import {
+  Activity,
+  Briefcase,
+  Bot,
+  FileText,
+  Database,
+  Users,
+  MoreHorizontal,
+} from "lucide-react";
+
+export function MobileBottomNav() {
+  const pathname = usePathname();
+  const { waitingCount } = useApp();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const router = useRouter();
+
+  const tabs = [
+    { href: "/", label: "Runs", icon: Activity, badge: waitingCount, match: (p: string) => p === "/" || p.startsWith("/runs") },
+    { href: "/jobs", label: "Jobs", icon: Briefcase, match: (p: string) => p.startsWith("/jobs") },
+    { href: "/agents", label: "Agents", icon: Bot, match: (p: string) => p.startsWith("/agents") },
+  ];
+
+  const moreLinks = [
+    { href: "/docs", label: "Docs", icon: FileText },
+    { href: "/databases", label: "Databases", icon: Database },
+    { href: "/users", label: "Users", icon: Users },
+  ];
+
+  const isMoreActive = moreLinks.some((l) => pathname.startsWith(l.href));
+
+  return (
+    <>
+      <div className="shrink-0 border-t bg-card safe-bottom md:hidden">
+        <nav className="flex items-center justify-around px-2">
+          {tabs.map((tab) => {
+            const isActive = tab.match(pathname);
+            return (
+              <Link
+                key={tab.href}
+                href={tab.href}
+                className={`relative flex flex-col items-center gap-0.5 px-3 py-2.5 text-[11px] font-medium transition-colors ${
+                  isActive ? "text-primary" : "text-muted-foreground"
+                }`}
+              >
+                <tab.icon className="h-5 w-5" />
+                <span>{tab.label}</span>
+                {"badge" in tab && (tab.badge ?? 0) > 0 && (
+                  <span className="absolute -top-0.5 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium leading-none text-primary-foreground">
+                    {tab.badge}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+          <button
+            onClick={() => setMoreOpen(true)}
+            className={`flex flex-col items-center gap-0.5 px-3 py-2.5 text-[11px] font-medium transition-colors ${
+              isMoreActive ? "text-primary" : "text-muted-foreground"
+            }`}
+          >
+            <MoreHorizontal className="h-5 w-5" />
+            <span>More</span>
+          </button>
+        </nav>
+      </div>
+
+      <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
+        <SheetContent side="bottom" className="rounded-t-2xl px-2 pb-8">
+          <nav className="grid grid-cols-3 gap-1 pt-2">
+            {moreLinks.map((link) => {
+              const isActive = pathname.startsWith(link.href);
+              return (
+                <button
+                  key={link.href}
+                  onClick={() => {
+                    setMoreOpen(false);
+                    router.push(link.href);
+                  }}
+                  className={`flex flex-col items-center gap-1.5 rounded-xl px-3 py-4 text-sm font-medium transition-colors ${
+                    isActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent"
+                  }`}
+                >
+                  <link.icon className="h-5 w-5" />
+                  <span className="text-xs">{link.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+          <div className="flex items-center justify-between px-2 pt-3 mt-2 border-t">
+            <span className="text-xs text-muted-foreground">Theme</span>
+            <ThemeToggle />
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
+  );
+}

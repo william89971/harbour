@@ -1,0 +1,240 @@
+import Database from "better-sqlite3";
+import path from "path";
+import { normalizeSchedule } from "../schedule";
+
+const DB_PATH = process.env.HARBOUR_DB_PATH || path.join(process.cwd(), "harbour.db");
+
+let _db: Database.Database | null = null;
+
+export function getDb(): Database.Database {
+  if (!_db) {
+    _db = new Database(DB_PATH);
+    _db.pragma("journal_mode = WAL");
+    _db.pragma("foreign_keys = ON");
+    initializeSchema(_db);
+  }
+  return _db;
+}
+
+export function setDb(db: Database.Database) {
+  _db = db;
+}
+
+export function resetDb() {
+  _db = null;
+}
+
+export function initializeSchema(db: Database.Database) {
+  db.exec(`
+    -- Users: human accounts for dashboard auth
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Agents: top-level entity, each has jobs/docs/data
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      api_key_hash TEXT NOT NULL,
+      last_polled_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Jobs: recurring responsibilities assigned to an agent
+    CREATE TABLE IF NOT EXISTS jobs (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      instructions TEXT,
+      schedule TEXT NOT NULL,
+      check_command TEXT,
+
+      timeout_minutes INTEGER NOT NULL DEFAULT 30,
+      one_off INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1,
+      last_run_at INTEGER,
+      next_run_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Runs: single execution of a job
+    CREATE TABLE IF NOT EXISTS runs (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skipped')),
+      scheduled_for INTEGER,
+      claimed_at INTEGER,
+      completed_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Run activity: ordered log of messages on a run
+    CREATE TABLE IF NOT EXISTS run_activity (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      author_type TEXT NOT NULL CHECK(author_type IN ('agent','user','system')),
+      author_id TEXT,
+      author_name TEXT,
+      content TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Docs: top-level markdown documents, linked to jobs via job_docs
+    CREATE TABLE IF NOT EXISTS docs (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      created_by_type TEXT CHECK(created_by_type IN ('user','agent')),
+      created_by_id TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS doc_revisions (
+      id TEXT PRIMARY KEY,
+      doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      author_type TEXT CHECK(author_type IN ('user','agent')),
+      author_id TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Job-doc linking: which docs a job references
+    CREATE TABLE IF NOT EXISTS job_docs (
+      job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
+      PRIMARY KEY (job_id, doc_id)
+    );
+
+    -- Databases: agent-managed SQLite tables (app-level, not agent-owned)
+    CREATE TABLE IF NOT EXISTS databases (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      table_name TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Database migration history
+    CREATE TABLE IF NOT EXISTS database_migrations (
+      id TEXT PRIMARY KEY,
+      database_id TEXT NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
+      version INTEGER NOT NULL,
+      description TEXT,
+      sql TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Job-database linking: which databases a job references
+    CREATE TABLE IF NOT EXISTS job_databases (
+      job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      database_id TEXT NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
+      PRIMARY KEY (job_id, database_id)
+    );
+
+    -- Indexes
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
+    CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+    CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id);
+
+    CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id);
+    CREATE INDEX IF NOT EXISTS idx_database_migrations_db ON database_migrations(database_id);
+  `);
+
+  // Migrations: drop agent_id from docs (now top-level)
+  const docCols = db.prepare(`PRAGMA table_info(docs)`).all() as any[];
+  if (docCols.some((c: any) => c.name === "agent_id")) {
+    db.exec(`DROP INDEX IF EXISTS idx_docs_agent`);
+    db.exec(`ALTER TABLE docs DROP COLUMN agent_id`);
+  }
+
+  // Migrations: add 'pending' to runs status CHECK constraint
+  // SQLite CHECK constraints can't be altered, so we recreate the table if needed
+  const runCheck = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
+  if (runCheck?.sql && !runCheck.sql.includes("pending")) {
+    db.exec(`
+      CREATE TABLE runs_new (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','waiting','pending','done','failed','skipped')),
+        claimed_at INTEGER,
+        completed_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      INSERT INTO runs_new SELECT * FROM runs;
+      DROP TABLE runs;
+      ALTER TABLE runs_new RENAME TO runs;
+      CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
+      CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+    `);
+  }
+
+  // Migrations: add one_off and timeout_minutes columns to jobs
+  const jobCols = db.prepare(`PRAGMA table_info(jobs)`).all() as any[];
+  if (!jobCols.some((c: any) => c.name === "one_off")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN one_off INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!jobCols.some((c: any) => c.name === "timeout_minutes")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN timeout_minutes INTEGER NOT NULL DEFAULT 30`);
+  }
+
+  // Migrations: add 'scheduled' status and scheduled_for column to runs
+  const runCheck2 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
+  if (runCheck2?.sql && !runCheck2.sql.includes("scheduled")) {
+    db.exec(`
+      CREATE TABLE runs_new (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skipped')),
+        scheduled_for INTEGER,
+        claimed_at INTEGER,
+        completed_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      INSERT INTO runs_new (id, job_id, agent_id, status, claimed_at, completed_at, created_at, updated_at)
+        SELECT id, job_id, agent_id, status, claimed_at, completed_at, created_at, updated_at FROM runs;
+      DROP TABLE runs;
+      ALTER TABLE runs_new RENAME TO runs;
+      CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
+      CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+    `);
+  }
+
+  // Migrations: normalize non-JSON schedule strings to canonical JSON
+  const nonJsonSchedules = db.prepare(
+    `SELECT id, schedule FROM jobs WHERE schedule NOT LIKE '{%'`
+  ).all() as { id: string; schedule: string }[];
+  if (nonJsonSchedules.length > 0) {
+    const update = db.prepare(`UPDATE jobs SET schedule = ? WHERE id = ?`);
+    for (const row of nonJsonSchedules) {
+      const normalized = normalizeSchedule(row.schedule);
+      if (normalized) update.run(normalized, row.id);
+    }
+  }
+}
