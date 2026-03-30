@@ -12,17 +12,15 @@ The problem is visibility. What jobs does each agent have? What ran today? What 
 
 Harbour is the layer underneath your agents — managing what recurring work each has, giving them shared context through docs and data, and surfacing the things that need you. Think of it as the operating system for your agents' responsibilities.
 
-Task management tools don't fit. Boards, sprints, and assignments assume a human is planning the work. Custom agent frameworks tie you to a specific runtime. Harbour is runtime-agnostic — any agent that can make HTTP requests can use it.
-
 ## How It Works
 
-**Agents** are registered in Harbour with an API key. They poll for work on their own schedule — Harbour never calls out to them. An agent can be anything: a Claude Code session, a cron job, a custom script.
+Harbour is a polling-based control plane. It never calls out to agents — they pull work on their own schedule. Any agent that can make HTTP requests can use it.
 
-**Jobs** are recurring responsibilities: "post a tweet every morning", "triage support every 15 minutes", "manage ad campaigns weekly." Each job has a schedule, instructions, and references to docs and data. When a job fires, it creates a **run**. Jobs can define a **pre-run check** — a script that runs before the LLM to decide if there's actual work to do, saving tokens when there isn't. Jobs have a configurable **timeout** (default 30 minutes) — stale runs are automatically failed so agents don't get stuck.
+**Agents** are registered with an API key. They poll `GET /api/agents/:id/next` for work. Harbour has built-in support for running agents via CLI tools like [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), and [Gemini CLI](https://github.com/google-gemini/gemini-cli) — or you can bring your own agent using any tool that can poll an endpoint, like [OpenClaw](https://openclaw.ai).
 
-**Runs** are the unit of work. A run has an activity log — an ordered record of agent and human messages. The agent does its work, posts updates, and either completes the run or sets it to **waiting** if it needs human input. Waiting runs surface on the dashboard. When you respond, the run moves to **pending**. On its next poll, the agent resumes with full conversation history.
+**Jobs** are recurring responsibilities: "post a tweet every morning", "triage support every 15 minutes", "manage ad campaigns weekly." Each job has a schedule, instructions, and references to docs and data. When a job fires, it creates a **run**.
 
-You can also create **one-off runs** from the dashboard — ad-hoc tasks assigned to an agent without a recurring schedule. These show up immediately as **scheduled** and get picked up on the agent's next poll.
+**Runs** are the unit of work. A run has an activity log — an ordered record of agent and human messages. The agent does its work, posts updates, and either completes the run or sets it to **waiting** if it needs human input. Waiting runs surface on the dashboard.
 
 **Docs** are shared markdown documents that provide context across jobs. Brand guidelines, escalation processes, strategy notes. Jobs declare which docs they need, and they're automatically injected into each run.
 
@@ -40,20 +38,40 @@ npm start
 
 Visit [http://localhost:3000](http://localhost:3000) and create your first account.
 
-For development:
+### Quick Start with a Harbour Agent
+
+The fastest way to get an agent running. Requires [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), or [Gemini CLI](https://github.com/google-gemini/gemini-cli) installed and authenticated.
+
+1. Open the dashboard and click **New Agent**
+2. Select **Harbour Agent** and pick your CLI tool — Harbour auto-detects what's installed
+3. Name it and pick a model
+4. Create a **job** for the agent with a schedule and instructions
+5. Install the runner:
 
 ```bash
-npm run dev
+npm run harbour -- agent install
 ```
 
-### Setting Up an Agent
+That's it. The runner polls every 60 seconds, picks up work, runs your CLI tool, and posts results back to Harbour. Logs go to `~/.harbour/runner.log`.
 
-1. Create an agent from the dashboard — you'll get an API key (shown once)
+Other runner commands:
+
+```bash
+npm run harbour -- agent list        # show configured agents
+npm run harbour -- agent run         # manual poll (useful for testing)
+npm run harbour -- agent uninstall   # stop the runner
+```
+
+### Bring Your Own Agent
+
+Harbour is agent-agnostic. Any tool that can poll an HTTP endpoint works.
+
+1. Create an agent from the dashboard — select **External** to get an API key
 2. Create a job with a schedule and instructions
-3. Copy the agent's invite text and paste it into your agent's system prompt
+3. Copy the invite text into your agent's system prompt
 4. Have your agent poll `GET /api/agents/:id/next` on a schedule
 
-The invite includes everything the agent needs to self-orient: credentials, endpoints, and a link to the full API guide at `/api/guide`.
+The invite includes credentials, endpoints, and a link to the full API guide at `/api/guide`. Tools like [OpenClaw](https://openclaw.ai), custom scripts, or any agent framework that can make HTTP requests will work.
 
 ## Agent API
 

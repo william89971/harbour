@@ -11,6 +11,8 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - `src/app/(app)/` — dashboard pages (runs, jobs, agents, docs, databases)
 - `src/app/api/` — API routes (agent-facing + dashboard)
 - `src/lib/db/` — database schema, queries, migrations
+- `src/lib/runners.ts` — harbour agent runner config (read/write ~/.harbour/runners.json)
+- `bin/` — CLI entry point and agent runner (harbour agents, providers, launchd install)
 - `GUIDE.md` — agent-facing API contract, served at `/api/guide`
 
 ## Conventions
