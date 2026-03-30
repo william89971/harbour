@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.1.0 — 2026-03-30
+
+### Harbour Agents
+- Built-in agent runner for Claude Code, Codex, and Gemini CLI
+- New Agent dialog: choose **Harbour Agent** (local CLI) or **External** (bring your own)
+- Auto-detect installed CLI tools with version display
+- CLI badge on agent list items, "Runner not active" banner
+- Runner config auto-saved to `~/.harbour/runners.json` on creation, cleaned up on deletion
+- `npm run harbour -- agent install` sets up a macOS launch agent (launchd) for automatic polling
+- `npm run harbour -- agent list/run/uninstall` for runner management
+- Session tracking for CLI tool conversation resumption across runs
+- Providers: Claude (`--dangerously-skip-permissions`), Codex (`--dangerously-bypass-approvals-and-sandbox`), Gemini (`--yolo`)
+
+### Schema
+- Agents table: added `type` (harbour/external), `cli`, `model` columns with auto-migration
+
 ## v1.0.0 — 2026-03-30
 
 Initial public release.
