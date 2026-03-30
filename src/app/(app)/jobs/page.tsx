@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -23,9 +24,29 @@ type Job = {
 type Agent = { id: string; name: string };
 
 export default function JobsPage() {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  const { data: jobs = [], isLoading: jobsLoading } = useQuery<Job[]>({
+    queryKey: ["jobs"],
+    queryFn: async () => {
+      const res = await fetch("/api/jobs");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: agents = [], isLoading: agentsLoading } = useQuery<Agent[]>({
+    queryKey: ["agents"],
+    queryFn: async () => {
+      const res = await fetch("/api/agents");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const loading = jobsLoading || agentsLoading;
 
   // Create dialog
   const [showCreate, setShowCreate] = useState(false);
@@ -35,22 +56,6 @@ export default function JobsPage() {
   const [instructions, setInstructions] = useState("");
   const [schedule, setSchedule] = useState(parseSchedule(null));
   const [checkCommand, setCheckCommand] = useState("");
-
-  async function loadAll() {
-    const [jobsRes, agentsRes] = await Promise.all([
-      fetch("/api/jobs"),
-      fetch("/api/agents"),
-    ]);
-    if (jobsRes.ok) setJobs(await jobsRes.json());
-    if (agentsRes.ok) {
-      const data = await agentsRes.json();
-      setAgents(data);
-      if (data.length > 0 && !agentId) setAgentId(data[0].id);
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => { loadAll(); }, []);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -72,7 +77,7 @@ export default function JobsPage() {
     setInstructions("");
     setSchedule(parseSchedule(null));
     setCheckCommand("");
-    loadAll();
+    queryClient.invalidateQueries({ queryKey: ["jobs"] });
   }
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
@@ -84,7 +89,7 @@ export default function JobsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
           <p className="text-sm text-muted-foreground mt-1">Recurring work across all agents.</p>
         </div>
-        <Button onClick={() => setShowCreate(true)} size="sm" disabled={agents.length === 0}>
+        <Button onClick={() => { if (agents.length > 0 && !agentId) setAgentId(agents[0].id); setShowCreate(true); }} size="sm" disabled={agents.length === 0}>
           <Plus className="h-4 w-4 mr-1.5" /> New Job
         </Button>
       </div>

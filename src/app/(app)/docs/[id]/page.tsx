@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,28 +27,32 @@ type Revision = {
 export default function DocDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
-  const [doc, setDoc] = useState<Doc | null>(null);
-  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(searchParams.get("edit") === "1");
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [showRevisions, setShowRevisions] = useState(false);
   const [revisions, setRevisions] = useState<Revision[]>([]);
+  const [editInitialized, setEditInitialized] = useState(false);
 
-  const loadDoc = useCallback(async () => {
-    const res = await fetch(`/api/docs/${id}`);
-    if (res.ok) {
-      const d = await res.json();
-      setDoc(d);
-      setEditTitle(d.title);
-      setEditContent(d.content || "");
-    }
-    setLoading(false);
-  }, [id]);
+  const { data: doc = null, isLoading: loading } = useQuery<Doc | null>({
+    queryKey: ["docs", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/docs/${id}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
 
-  useEffect(() => { loadDoc(); }, [loadDoc]);
+  // Initialize edit fields from doc data once
+  if (doc && !editInitialized) {
+    setEditTitle(doc.title);
+    setEditContent(doc.content || "");
+    setEditInitialized(true);
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -58,7 +63,8 @@ export default function DocDetailPage() {
     });
     setSaving(false);
     setEditing(false);
-    loadDoc();
+    setEditInitialized(false);
+    queryClient.invalidateQueries({ queryKey: ["docs", id] });
   }
 
   async function handleDelete() {
@@ -89,7 +95,7 @@ export default function DocDetailPage() {
         <div className="flex gap-1.5">
           {editing ? (
             <>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditing(false); setEditTitle(doc.title); setEditContent(doc.content || ""); }}>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditing(false); setEditInitialized(false); setEditTitle(doc.title); setEditContent(doc.content || ""); }}>
                 <X className="h-3.5 w-3.5" />
               </Button>
               <Button size="icon" className="h-8 w-8" onClick={handleSave} disabled={saving}>

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { Database, Briefcase } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
@@ -17,15 +17,15 @@ type DatabaseEntry = {
 };
 
 export default function DatabasesPage() {
-  const [databases, setDatabases] = useState<DatabaseEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch("/api/databases").then(r => r.json()).then(data => {
-      setDatabases(data);
-      setLoading(false);
-    });
-  }, []);
+  const { data: databases = [], isLoading: loading } = useQuery<DatabaseEntry[]>({
+    queryKey: ["databases"],
+    queryFn: async () => {
+      const res = await fetch("/api/databases");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
 
