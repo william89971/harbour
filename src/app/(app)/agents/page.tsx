@@ -34,11 +34,7 @@ type CliTool = {
   version?: string;
 };
 
-const DEFAULT_MODELS: Record<string, string[]> = {
-  claude: ["sonnet", "opus", "haiku"],
-  codex: ["gpt-5.4", "o3", "gpt-4.1"],
-  gemini: ["gemini-2.5-pro", "gemini-2.5-flash"],
-};
+import { CLI_CONFIG } from "@/lib/cli-config";
 
 export default function AgentsPage() {
   const queryClient = useQueryClient();
@@ -68,6 +64,7 @@ export default function AgentsPage() {
   const [loadingTools, setLoadingTools] = useState(false);
   const [selectedCli, setSelectedCli] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [selectedThinking, setSelectedThinking] = useState<string>("");
 
 
   async function loadCliTools() {
@@ -86,8 +83,9 @@ export default function AgentsPage() {
 
   function handleCliSelect(cliId: string) {
     setSelectedCli(cliId);
-    const models = DEFAULT_MODELS[cliId] || [];
-    setSelectedModel(models[0] || "");
+    const config = CLI_CONFIG[cliId];
+    setSelectedModel(config?.models[0] || "");
+    setSelectedThinking("");
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -100,6 +98,7 @@ export default function AgentsPage() {
       body.type = "harbour";
       body.cli = selectedCli!;
       body.model = selectedModel;
+      if (selectedThinking) body.thinking = selectedThinking;
     }
 
     const res = await fetch("/api/agents", {
@@ -151,6 +150,7 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
     setAgentType(null);
     setSelectedCli(null);
     setSelectedModel("");
+    setSelectedThinking("");
     setCliTools([]);
   }
 
@@ -325,26 +325,43 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                 <Label htmlFor="agent-desc">Description</Label>
                 <Textarea id="agent-desc" value={description} onChange={e => setDescription(e.target.value)} placeholder="What does this agent do?" rows={2} />
               </div>
-              {agentType === "harbour" && selectedCli && (
-                <div className="space-y-2">
-                  <Label htmlFor="agent-model">Model</Label>
-                  <select
-                    id="agent-model"
-                    value={selectedModel}
-                    onChange={e => setSelectedModel(e.target.value)}
-                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    {(DEFAULT_MODELS[selectedCli] || []).map(m => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
+              {agentType === "harbour" && selectedCli && CLI_CONFIG[selectedCli] && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="agent-model">Model</Label>
+                    <select
+                      id="agent-model"
+                      value={selectedModel}
+                      onChange={e => setSelectedModel(e.target.value)}
+                      className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                    >
+                      {CLI_CONFIG[selectedCli].models.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="agent-thinking">{CLI_CONFIG[selectedCli].thinkingLabel}</Label>
+                    <select
+                      id="agent-thinking"
+                      value={selectedThinking}
+                      onChange={e => setSelectedThinking(e.target.value)}
+                      className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                    >
+                      <option value="">Default</option>
+                      {CLI_CONFIG[selectedCli].thinkingOptions.map(o => (
+                        <option key={o} value={o}>{o}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
               )}
               <DialogFooter>
                 <Button type="button" variant="ghost" onClick={() => {
                   if (agentType === "harbour") {
                     setSelectedCli(null);
                     setSelectedModel("");
+                    setSelectedThinking("");
                   } else {
                     setAgentType(null);
                   }

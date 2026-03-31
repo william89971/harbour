@@ -33,7 +33,7 @@ const PROVIDERS = {
     generateSessionId() {
       return crypto.randomUUID();
     },
-    buildCommand(prompt, model, workingDir, sessionId, isNewSession) {
+    buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking) {
       const args = [
         "-p",
         "--output-format", "stream-json",
@@ -42,6 +42,7 @@ const PROVIDERS = {
         "--dangerously-skip-permissions",
       ];
       if (model) args.push("--model", model);
+      if (thinking) args.push("--effort", thinking);
       if (isNewSession && sessionId) {
         args.push("--session-id", sessionId);
       } else if (sessionId) {
@@ -126,15 +127,17 @@ const PROVIDERS = {
   },
 
   codex: {
-    buildCommand(prompt, model, workingDir, sessionId) {
+    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
       if (sessionId) {
         const args = ["exec", "resume", "--dangerously-bypass-approvals-and-sandbox", "--json"];
         if (model) args.push("-m", model);
+        if (thinking) args.push("--reasoning-effort", thinking);
         args.push(sessionId, prompt);
         return { binary: resolveBinary("codex"), args, cwd: workingDir };
       }
       const args = ["exec", "--dangerously-bypass-approvals-and-sandbox", "--json"];
       if (model) args.push("-m", model);
+      if (thinking) args.push("--reasoning-effort", thinking);
       args.push(prompt);
       return { binary: resolveBinary("codex"), args, cwd: workingDir };
     },
@@ -235,9 +238,10 @@ const PROVIDERS = {
   },
 
   gemini: {
-    buildCommand(prompt, model, workingDir, sessionId) {
+    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
       const args = ["--prompt", prompt, "--yolo", "-o", "stream-json"];
       if (model) args.push("-m", model);
+      if (thinking) args.push("--thinking", thinking);
       if (sessionId) {
         args.push("--resume", sessionId);
       }

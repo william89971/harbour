@@ -47,10 +47,10 @@ export function listRunners() {
     console.log("Create one from the dashboard or with: harbour agent add");
     return;
   }
-  console.log(`\n  ${"NAME".padEnd(20)} ${"CLI".padEnd(10)} ${"MODEL".padEnd(15)} URL`);
-  console.log(`  ${"─".repeat(20)} ${"─".repeat(10)} ${"─".repeat(15)} ${"─".repeat(30)}`);
+  console.log(`\n  ${"NAME".padEnd(20)} ${"CLI".padEnd(10)} ${"MODEL".padEnd(15)} ${"THINKING".padEnd(10)} URL`);
+  console.log(`  ${"─".repeat(20)} ${"─".repeat(10)} ${"─".repeat(15)} ${"─".repeat(10)} ${"─".repeat(30)}`);
   for (const r of runners) {
-    console.log(`  ${(r.name || r.agentId).padEnd(20)} ${(r.cli || "—").padEnd(10)} ${(r.model || "—").padEnd(15)} ${r.url}`);
+    console.log(`  ${(r.name || r.agentId).padEnd(20)} ${(r.cli || "—").padEnd(10)} ${(r.model || "—").padEnd(15)} ${(r.thinking || "—").padEnd(10)} ${r.url}`);
   }
   console.log();
 }

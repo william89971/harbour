@@ -357,6 +357,8 @@ function buildRunPayload(runId: string) {
       name: job.name,
       instructions: job.instructions,
       check: job.check_command,
+      model: job.model || null,
+      thinking: job.thinking || null,
     },
     docs,
     data,

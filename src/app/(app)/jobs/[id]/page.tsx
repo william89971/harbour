@@ -16,14 +16,16 @@ import { BackLink } from "@/components/app/back-link";
 import { SchedulePicker, parseSchedule, serializeSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
   Settings, Trash2, X, Plus,
-  FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock,
+  FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock, Cpu,
 } from "lucide-react";
+import { CLI_CONFIG } from "@/lib/cli-config";
 import { timeAgo, formatTimestamp } from "@/lib/time";
 import { StatusDot } from "@/components/app/run-status";
 
 type Job = {
   id: string; agent_id: string; agent_name: string; name: string; description: string | null;
   instructions: string | null; schedule: string; check_command: string | null; timeout_minutes: number;
+  model: string | null; thinking: string | null;
   active: number; last_run_at: number | null; next_run_at: number | null;
   docs: { id: string; title: string }[];
   databases: { id: string; name: string; table_name: string }[];
@@ -65,6 +67,17 @@ export default function JobDetailPage() {
       return res.json();
     },
     refetchInterval: 5000,
+  });
+
+  const { data: agent = null } = useQuery({
+    queryKey: ["agents", job?.agent_id],
+    queryFn: async () => {
+      if (!job?.agent_id) return null;
+      const res = await fetch(`/api/agents/${job.agent_id}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!job?.agent_id,
   });
 
   const { data: recentRunsData = [] } = useQuery({
@@ -111,6 +124,8 @@ export default function JobDetailPage() {
   const [editSchedule, setEditSchedule] = useState(parseSchedule(null));
   const [editCheck, setEditCheck] = useState("");
   const [editTimeout, setEditTimeout] = useState(30);
+  const [editModel, setEditModel] = useState("");
+  const [editThinking, setEditThinking] = useState("");
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
@@ -124,6 +139,8 @@ export default function JobDetailPage() {
         schedule: serializeSchedule(editSchedule),
         checkCommand: editCheck || undefined,
         timeoutMinutes: editTimeout,
+        model: editModel || "",
+        thinking: editThinking || "",
       }),
     });
     setShowEdit(false);
@@ -179,7 +196,7 @@ export default function JobDetailPage() {
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleToggleActive} title={job.active ? "Pause" : "Resume"}>
             {job.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditCheck(job.check_command || ""); setEditTimeout(job.timeout_minutes ?? 30); } setShowEdit(true); }} title="Edit">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditCheck(job.check_command || ""); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); } setShowEdit(true); }} title="Edit">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -190,6 +207,12 @@ export default function JobDetailPage() {
           <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <Link href={`/agents/${job.agent_id}`} className="text-muted-foreground hover:text-foreground transition-colors truncate">{job.agent_name}</Link>
         </div>
+        {(job.model || job.thinking) && (
+          <div className="flex items-center gap-2 text-sm">
+            <Cpu className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground truncate">{[job.model, job.thinking].filter(Boolean).join(" · ")}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2 text-sm">
           <Calendar className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-muted-foreground truncate">{formatSchedule(parseSchedule(job.schedule))}</span>
@@ -303,6 +326,41 @@ export default function JobDetailPage() {
               <Label>Timeout (minutes)</Label>
               <Input type="number" min={1} value={editTimeout} onChange={e => setEditTimeout(parseInt(e.target.value) || 30)} />
             </div>
+            {(() => {
+              if (!agent || agent.type !== "harbour" || !agent.cli) return null;
+              const config = CLI_CONFIG[agent.cli];
+              if (!config) return null;
+              return (
+                <>
+                  <div className="space-y-2">
+                    <Label>Model</Label>
+                    <select
+                      value={editModel}
+                      onChange={e => setEditModel(e.target.value)}
+                      className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                    >
+                      <option value="">Agent default{agent.model ? ` (${agent.model})` : ""}</option>
+                      {config.models.map((m: string) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{config.thinkingLabel}</Label>
+                    <select
+                      value={editThinking}
+                      onChange={e => setEditThinking(e.target.value)}
+                      className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                    >
+                      <option value="">Agent default{agent.thinking ? ` (${agent.thinking})` : ""}</option>
+                      {config.thinkingOptions.map((o: string) => (
+                        <option key={o} value={o}>{o}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              );
+            })()}
             <DialogFooter>
               <Button type="button" variant="destructive" onClick={handleDelete} className="mr-auto"><Trash2 className="h-4 w-4 mr-1" /> Delete</Button>
               <Button type="button" variant="ghost" onClick={() => setShowEdit(false)}>Cancel</Button>

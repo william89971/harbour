@@ -260,4 +260,16 @@ export function initializeSchema(db: Database.Database) {
   if (!agentCols.some((c: any) => c.name === "model")) {
     db.exec(`ALTER TABLE agents ADD COLUMN model TEXT`);
   }
+  if (!agentCols.some((c: any) => c.name === "thinking")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN thinking TEXT`);
+  }
+
+  // Migrations: add model and thinking columns to jobs table
+  const jobCols2 = db.prepare(`PRAGMA table_info(jobs)`).all() as any[];
+  if (!jobCols2.some((c: any) => c.name === "model")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN model TEXT`);
+  }
+  if (!jobCols2.some((c: any) => c.name === "thinking")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN thinking TEXT`);
+  }
 }

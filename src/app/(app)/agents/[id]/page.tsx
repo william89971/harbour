@@ -16,12 +16,14 @@ import { BackLink } from "@/components/app/back-link";
 import { parseSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
   Bot, Settings, Key, Copy, Check, Calendar, Activity, Wifi, FileText,
-  Briefcase, Trash2,
+  Briefcase, Trash2, Terminal, Cpu, Brain,
 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
 
-type Agent = { id: string; name: string; description: string | null; last_polled_at: number | null; created_at: number };
+import { CLI_CONFIG } from "@/lib/cli-config";
+
+type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; last_polled_at: number | null; created_at: number };
 type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; check_command: string | null };
 type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
@@ -81,6 +83,8 @@ export default function AgentDetailPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
+  const [editModel, setEditModel] = useState("");
+  const [editThinking, setEditThinking] = useState("");
   const [showRotateKey, setShowRotateKey] = useState(false);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -88,10 +92,15 @@ export default function AgentDetailPage() {
   const [inviteCopied, setInviteCopied] = useState(false);
 
   async function handleUpdateAgent() {
+    const body: Record<string, string> = { name: editName, description: editDesc };
+    if (agent?.type === "harbour") {
+      body.model = editModel;
+      body.thinking = editThinking;
+    }
     await fetch(`/api/agents/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: editName, description: editDesc }),
+      body: JSON.stringify(body),
     });
     setShowSettings(false);
     queryClient.invalidateQueries({ queryKey: ["agents"] });
@@ -155,24 +164,49 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
             <Bot className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">{agent.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold tracking-tight">{agent.name}</h1>
+              {agent.type === "harbour" && agent.cli && (
+                <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{agent.cli}</span>
+              )}
+            </div>
             {agent.description && <p className="text-sm text-muted-foreground mt-0.5">{agent.description}</p>}
           </div>
         </div>
         <div className="flex gap-1.5">
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowInvite(true)} title="Copy Invite">
-            <FileText className="h-3.5 w-3.5" />
-          </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowRotateKey(true)} title="API Key">
-            <Key className="h-3.5 w-3.5" />
-          </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setShowSettings(true); }} title="Settings">
+          {agent.type === "external" && (
+            <>
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowInvite(true)} title="Copy Invite">
+                <FileText className="h-3.5 w-3.5" />
+              </Button>
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowRotateKey(true)} title="API Key">
+                <Key className="h-3.5 w-3.5" />
+              </Button>
+            </>
+          )}
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setShowSettings(true); }} title="Settings">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-3 gap-x-4 rounded-lg border p-3">
+        <div className="flex items-center gap-2 text-sm">
+          <Terminal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground truncate">{agent.type === "harbour" ? "Harbour" : "External"}</span>
+        </div>
+        {agent.type === "harbour" && agent.model && (
+          <div className="flex items-center gap-2 text-sm">
+            <Cpu className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground truncate">{agent.model}</span>
+          </div>
+        )}
+        {agent.type === "harbour" && agent.cli && (
+          <div className="flex items-center gap-2 text-sm">
+            <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground truncate">{agent.thinking || "Default"}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2 text-sm">
           <Briefcase className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-muted-foreground truncate">{jobs.length} {jobs.length === 1 ? "job" : "jobs"}</span>
@@ -297,6 +331,35 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
               <Label>Description</Label>
               <Textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} rows={2} />
             </div>
+            {agent.type === "harbour" && agent.cli && CLI_CONFIG[agent.cli] && (
+              <>
+                <div className="space-y-1">
+                  <Label>Model</Label>
+                  <select
+                    value={editModel}
+                    onChange={e => setEditModel(e.target.value)}
+                    className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                  >
+                    {CLI_CONFIG[agent.cli].models.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label>{CLI_CONFIG[agent.cli].thinkingLabel}</Label>
+                  <select
+                    value={editThinking}
+                    onChange={e => setEditThinking(e.target.value)}
+                    className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                  >
+                    <option value="">Default</option>
+                    {CLI_CONFIG[agent.cli].thinkingOptions.map(o => (
+                      <option key={o} value={o}>{o}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="destructive" onClick={handleDeleteAgent} className="mr-auto"><Trash2 className="h-4 w-4 mr-1" /> Delete</Button>

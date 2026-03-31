@@ -8,19 +8,21 @@ export function createJob(agentId: string, data: {
   instructions?: string;
   schedule: string;
   checkCommand?: string;
+  model?: string;
+  thinking?: string;
   active?: boolean;
 }) {
   const db = getDb();
   const id = uuid();
   const nextRunAt = data.active !== false ? getNextRunTime(data.schedule) : null;
   db.prepare(`
-    INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, check_command, active, next_run_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, check_command, model, thinking, active, next_run_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, agentId, data.name, data.description || null,
     data.instructions || null, data.schedule,
-    data.checkCommand || null, data.active !== false ? 1 : 0,
-    nextRunAt
+    data.checkCommand || null, data.model || null, data.thinking || null,
+    data.active !== false ? 1 : 0, nextRunAt
   );
   return getJobById(id);
 }
@@ -83,6 +85,8 @@ export function updateJob(id: string, data: {
   instructions?: string;
   schedule?: string;
   checkCommand?: string;
+  model?: string;
+  thinking?: string;
   timeoutMinutes?: number;
 
   active?: boolean;
@@ -96,6 +100,8 @@ export function updateJob(id: string, data: {
   if (data.instructions !== undefined) { fields.push("instructions = ?"); values.push(data.instructions); }
   if (data.schedule !== undefined) { fields.push("schedule = ?"); values.push(data.schedule); }
   if (data.checkCommand !== undefined) { fields.push("check_command = ?"); values.push(data.checkCommand); }
+  if (data.model !== undefined) { fields.push("model = ?"); values.push(data.model || null); }
+  if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }
   if (data.timeoutMinutes !== undefined) { fields.push("timeout_minutes = ?"); values.push(data.timeoutMinutes); }
 
   if (data.active !== undefined) { fields.push("active = ?"); values.push(data.active ? 1 : 0); }

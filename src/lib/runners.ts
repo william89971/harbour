@@ -11,6 +11,7 @@ export type RunnerConfig = {
   apiKey: string;
   cli: string;
   model: string | null;
+  thinking: string | null;
   url: string;
 };
 

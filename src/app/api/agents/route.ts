@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { name, description, type, cli, model } = body;
+  const { name, description, type, cli, model, thinking } = body;
   if (!name) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const agent = createAgent(name, description, type === "harbour" ? { type, cli, model } : undefined);
+  const agent = createAgent(name, description, type === "harbour" ? { type, cli, model, thinking } : undefined);
 
   // For harbour agents, save runner config locally so the CLI can poll
   if (type === "harbour") {
@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
       apiKey: agent.apiKey,
       cli: cli,
       model: model || null,
+      thinking: thinking || null,
       url: baseUrl,
     });
   }

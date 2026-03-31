@@ -107,7 +107,7 @@ function buildPrompt(payload, apiKey, isResume) {
 }
 
 async function runSingleAgent(runner) {
-  const { agentId, apiKey, cli, model, name: agentName, url } = runner;
+  const { agentId, apiKey, cli, model: agentModel, thinking: agentThinking, name: agentName, url } = runner;
   const provider = getProvider(cli);
   const sessions = loadSessions();
 
@@ -143,9 +143,11 @@ async function runSingleAgent(runner) {
   // Build prompt
   const prompt = buildPrompt(payload, apiKey, isResume);
 
-  // Build CLI command
+  // Build CLI command — job-level model/thinking override agent defaults
+  const model = payload.job?.model || agentModel;
+  const thinking = payload.job?.thinking || agentThinking;
   const workingDir = ensureWorkingDir(agentName);
-  const cmd = provider.buildCommand(prompt, model, workingDir, sessionId, isNewSession);
+  const cmd = provider.buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking);
 
   // Batch streaming events and flush to Harbour periodically
   let eventBatch = [];

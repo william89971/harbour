@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthFromRequest, requireAuth } from "@/lib/auth";
 import { getAgentById, updateAgent, deleteAgent } from "@/lib/db/queries";
-import { removeRunnerConfig } from "@/lib/runners";
+import { removeRunnerConfig, loadRunners, saveRunnerConfig } from "@/lib/runners";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await getAuthFromRequest(req);
@@ -25,6 +25,18 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const body = await req.json();
   const updated = updateAgent(id, body);
+
+  // Sync runner config if this is a harbour agent and model/name/thinking changed
+  if (existing.type === "harbour" && (body.model !== undefined || body.name !== undefined || body.thinking !== undefined)) {
+    const runner = loadRunners().find(r => r.agentId === id);
+    if (runner) {
+      if (body.model !== undefined) runner.model = body.model;
+      if (body.name !== undefined) runner.name = body.name;
+      if (body.thinking !== undefined) runner.thinking = body.thinking || null;
+      saveRunnerConfig(runner);
+    }
+  }
+
   return NextResponse.json(updated);
 }
 

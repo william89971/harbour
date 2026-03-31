@@ -13,6 +13,7 @@ import { SchedulePicker, parseSchedule, serializeSchedule, formatSchedule } from
 import { Plus, Briefcase, Bot, Calendar } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
+import { CLI_CONFIG } from "@/lib/cli-config";
 
 type Job = {
   id: string; agent_id: string; agent_name: string; name: string;
@@ -21,7 +22,7 @@ type Job = {
   last_run_at: number | null; check_command: string | null;
 };
 
-type Agent = { id: string; name: string };
+type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null };
 
 export default function JobsPage() {
   const queryClient = useQueryClient();
@@ -56,6 +57,8 @@ export default function JobsPage() {
   const [instructions, setInstructions] = useState("");
   const [schedule, setSchedule] = useState(parseSchedule(null));
   const [checkCommand, setCheckCommand] = useState("");
+  const [jobModel, setJobModel] = useState("");
+  const [jobThinking, setJobThinking] = useState("");
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -69,6 +72,8 @@ export default function JobsPage() {
         instructions: instructions || undefined,
         schedule: serializeSchedule(schedule),
         checkCommand: checkCommand || undefined,
+        model: jobModel || undefined,
+        thinking: jobThinking || undefined,
       }),
     });
     setShowCreate(false);
@@ -77,6 +82,8 @@ export default function JobsPage() {
     setInstructions("");
     setSchedule(parseSchedule(null));
     setCheckCommand("");
+    setJobModel("");
+    setJobThinking("");
     queryClient.invalidateQueries({ queryKey: ["jobs"] });
   }
 
@@ -138,7 +145,7 @@ export default function JobsPage() {
               <Label>Agent</Label>
               <select
                 value={agentId}
-                onChange={e => setAgentId(e.target.value)}
+                onChange={e => { setAgentId(e.target.value); setJobModel(""); setJobThinking(""); }}
                 className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
               >
                 {agents.map(a => (
@@ -167,6 +174,42 @@ export default function JobsPage() {
               <Input value={checkCommand} onChange={e => setCheckCommand(e.target.value)} placeholder="e.g. python3 checks/new_videos.py" className="font-mono text-xs" />
               <p className="text-xs text-muted-foreground">Shell command run before the LLM. Exit 0 = proceed, non-zero = skip.</p>
             </div>
+            {(() => {
+              const selectedAgent = agents.find(a => a.id === agentId);
+              if (!selectedAgent || selectedAgent.type !== "harbour" || !selectedAgent.cli) return null;
+              const config = CLI_CONFIG[selectedAgent.cli];
+              if (!config) return null;
+              return (
+                <>
+                  <div className="space-y-2">
+                    <Label>Model</Label>
+                    <select
+                      value={jobModel}
+                      onChange={e => setJobModel(e.target.value)}
+                      className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                    >
+                      <option value="">Agent default{selectedAgent.model ? ` (${selectedAgent.model})` : ""}</option>
+                      {config.models.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{config.thinkingLabel}</Label>
+                    <select
+                      value={jobThinking}
+                      onChange={e => setJobThinking(e.target.value)}
+                      className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                    >
+                      <option value="">Agent default{selectedAgent.thinking ? ` (${selectedAgent.thinking})` : ""}</option>
+                      {config.thinkingOptions.map(o => (
+                        <option key={o} value={o}>{o}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              );
+            })()}
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
               <Button type="submit">Create Job</Button>
