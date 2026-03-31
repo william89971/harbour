@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth } from "@/lib/auth";
 
-export async function GET(req: NextRequest) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const GET = withAuth(async () => {
   const timezones = Intl.supportedValuesOf("timeZone");
   return NextResponse.json(timezones);
-}
+});

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth } from "@/lib/auth";
 import { execSync } from "child_process";
 
 const CLI_TOOLS = [
@@ -27,11 +27,7 @@ function checkTool(tool: typeof CLI_TOOLS[number]) {
   }
 }
 
-export async function GET(req: NextRequest) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const GET = withAuth(async () => {
   const tools = CLI_TOOLS.map(checkTool);
   return NextResponse.json(tools);
-}
+});

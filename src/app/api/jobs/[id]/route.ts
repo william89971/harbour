@@ -1,24 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth } from "@/lib/auth";
 import { getJobById, updateJob, deleteJob } from "@/lib/db/queries";
 import { normalizeSchedule } from "@/lib/schedule";
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const GET = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const job = getJobById(id);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
   return NextResponse.json(job);
-}
+});
 
-export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const PUT = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const existing = getJobById(id);
   if (!existing) return NextResponse.json({ error: "Job not found" }, { status: 404 });
@@ -33,14 +25,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
   const updated = updateJob(id, body);
   return NextResponse.json(updated);
-}
+});
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const DELETE = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   deleteJob(id);
   return NextResponse.json({ ok: true });
-}
+});

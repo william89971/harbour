@@ -1,27 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth, requireAgentOwnership } from "@/lib/auth";
 import { getRunById, addRunActivity, listRunActivity, updateRunStatus } from "@/lib/db/queries";
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const GET = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const run = getRunById(id);
   if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
   return NextResponse.json(listRunActivity(id));
-}
+});
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const POST = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const run = getRunById(id);
   if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+
+  const ownerError = requireAgentOwnership(auth, run.agent_id);
+  if (ownerError) return ownerError;
 
   const body = await req.json();
   if (!body.content) {
@@ -32,14 +27,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   let authorId: string | null;
   let authorName: string;
 
-  if (auth!.type === "user") {
+  if (auth.type === "user") {
     authorType = "user";
-    authorId = auth!.userId;
-    authorName = auth!.displayName;
+    authorId = auth.userId;
+    authorName = auth.displayName;
   } else {
     authorType = "agent";
-    authorId = auth!.agentId;
-    authorName = auth!.agentName;
+    authorId = auth.agentId;
+    authorName = auth.agentName;
   }
 
   const entry = addRunActivity(id, authorType, authorId, authorName, body.content);
@@ -51,4 +46,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   return NextResponse.json(entry, { status: 201 });
-}
+});

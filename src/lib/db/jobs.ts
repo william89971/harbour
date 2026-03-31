@@ -155,32 +155,35 @@ export function createOneOffRun(agentId: string, data: {
   const now = Math.floor(Date.now() / 1000);
   const runAt = data.runAt || now;
 
-  // Create the backing job (hidden, one_off)
-  db.prepare(`
-    INSERT INTO jobs (id, agent_id, name, instructions, schedule, one_off, active, next_run_at)
-    VALUES (?, ?, ?, ?, '{}', 1, 1, ?)
-  `).run(jobId, agentId, data.name, data.instructions || null, runAt);
+  const create = db.transaction(() => {
+    // Create the backing job (hidden, one_off)
+    db.prepare(`
+      INSERT INTO jobs (id, agent_id, name, instructions, schedule, one_off, active, next_run_at)
+      VALUES (?, ?, ?, ?, '{}', 1, 1, ?)
+    `).run(jobId, agentId, data.name, data.instructions || null, runAt);
 
-  // Merge explicitly selected docs with pinned docs
-  const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds()]);
-  if (allDocIds.size > 0) {
-    const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
-    for (const docId of allDocIds) linkStmt.run(jobId, docId);
-  }
+    // Merge explicitly selected docs with pinned docs
+    const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds()]);
+    if (allDocIds.size > 0) {
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
+      for (const docId of allDocIds) linkStmt.run(jobId, docId);
+    }
 
-  // Merge explicitly selected env vars with pinned env vars
-  const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds()]);
-  if (allEnvVarIds.size > 0) {
-    const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
-    for (const envId of allEnvVarIds) linkStmt.run(jobId, envId);
-  }
+    // Merge explicitly selected env vars with pinned env vars
+    const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds()]);
+    if (allEnvVarIds.size > 0) {
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
+      for (const envId of allEnvVarIds) linkStmt.run(jobId, envId);
+    }
 
-  // Create the run immediately with 'scheduled' status
-  db.prepare(`
-    INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, created_at, updated_at)
-    VALUES (?, ?, ?, 'scheduled', ?, ?, ?)
-  `).run(runId, jobId, agentId, runAt, now, now);
+    // Create the run immediately with 'scheduled' status
+    db.prepare(`
+      INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, created_at, updated_at)
+      VALUES (?, ?, ?, 'scheduled', ?, ?, ?)
+    `).run(runId, jobId, agentId, runAt, now, now);
+  });
 
+  create();
   return { jobId, runId };
 }
 

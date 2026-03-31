@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth } from "@/lib/auth";
 import { getDatabaseById, getRows, insertRows } from "@/lib/db/queries";
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const GET = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const db = getDatabaseById(id);
   if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
@@ -19,13 +15,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   const result = getRows(id, { limit, offset, orderBy, order });
   return NextResponse.json(result);
-}
+});
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const POST = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const db = getDatabaseById(id);
   if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
@@ -39,4 +31,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
-}
+});

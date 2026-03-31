@@ -1,24 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth, withUserAuth } from "@/lib/auth";
 import { listAgents, createAgent } from "@/lib/db/queries";
 import { saveRunnerConfig } from "@/lib/runners";
 
-export async function GET(req: NextRequest) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const GET = withAuth(async () => {
   return NextResponse.json(listAgents());
-}
+});
 
-export async function POST(req: NextRequest) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-  if (auth!.type !== "user") {
-    return NextResponse.json({ error: "Only users can create agents" }, { status: 403 });
-  }
-
+export const POST = withUserAuth(async (req) => {
   const body = await req.json();
   const { name, description, type, cli, model, thinking } = body;
   if (!name) {
@@ -47,4 +36,4 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json(agent, { status: 201 });
-}
+});

@@ -1,14 +1,10 @@
 import { NextRequest } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth } from "@/lib/auth";
 import { getRunById, listRunOutput } from "@/lib/db/queries";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const GET = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const run = getRunById(id);
   if (!run) {
@@ -73,4 +69,4 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       Connection: "keep-alive",
     },
   });
-}
+});

@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth } from "@/lib/auth";
 import { getAgentById, createDatabase, getDatabaseByName, insertRows, linkDatabaseToJob } from "@/lib/db/queries";
 
 // POST: Agent creates a database and optionally links it to a job + inserts initial rows
 // This is the convenience endpoint for agents — combines create + link + seed in one call
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const POST = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const agent = getAgentById(id);
   if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
@@ -41,4 +37,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
-}
+});

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth, requireAgentOwnership } from "@/lib/auth";
 import { getAgentById, touchAgentPolled, getAgentNextRun, peekAgentNext } from "@/lib/db/queries";
 
 function buildApiSection(req: NextRequest, runId: string) {
@@ -25,12 +25,11 @@ function buildApiSection(req: NextRequest, runId: string) {
   };
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const GET = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
+  const ownerError = requireAgentOwnership(auth, id);
+  if (ownerError) return ownerError;
+
   const existing = getAgentById(id);
   if (!existing) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
 
@@ -51,4 +50,4 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     ...payload,
     api: buildApiSection(req, payload.run.id),
   });
-}
+});

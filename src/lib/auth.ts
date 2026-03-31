@@ -2,18 +2,27 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession, authenticateAgent } from "./db/queries";
 
-export type AuthContext = {
+export type UserAuth = {
   type: "user";
   userId: string;
   email: string;
   displayName: string;
-} | {
+};
+
+export type AgentAuth = {
   type: "agent";
   agentId: string;
   agentName: string;
 };
 
-export async function getAuthFromRequest(req: NextRequest): Promise<AuthContext | null> {
+export type AuthContext = UserAuth | AgentAuth;
+
+type RouteContext = { params: Promise<Record<string, string>> };
+
+type AuthHandler = (req: NextRequest, auth: AuthContext, ctx: RouteContext) => Promise<Response>;
+type UserAuthHandler = (req: NextRequest, auth: UserAuth, ctx: RouteContext) => Promise<Response>;
+
+async function getAuthFromRequest(req: NextRequest): Promise<AuthContext | null> {
   // Check for API key auth (agents)
   const authHeader = req.headers.get("authorization");
   if (authHeader?.startsWith("Bearer ")) {
@@ -37,6 +46,29 @@ export async function getAuthFromRequest(req: NextRequest): Promise<AuthContext 
   return null;
 }
 
+export function withAuth(handler: AuthHandler) {
+  return async (req: NextRequest, ctx: RouteContext) => {
+    const auth = await getAuthFromRequest(req);
+    if (!auth) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    return handler(req, auth, ctx);
+  };
+}
+
+export function withUserAuth(handler: UserAuthHandler) {
+  return async (req: NextRequest, ctx: RouteContext) => {
+    const auth = await getAuthFromRequest(req);
+    if (!auth) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (auth.type !== "user") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    return handler(req, auth, ctx);
+  };
+}
+
 export async function getAuthFromCookies(): Promise<{ userId: string; email: string; displayName: string } | null> {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get("harbour_session")?.value;
@@ -46,9 +78,10 @@ export async function getAuthFromCookies(): Promise<{ userId: string; email: str
   return { userId: session.userId, email: session.email, displayName: session.displayName };
 }
 
-export function requireAuth(auth: AuthContext | null): NextResponse | null {
-  if (!auth) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+/** If caller is an agent, verify it owns the given agentId. Users pass through. */
+export function requireAgentOwnership(auth: AuthContext, agentId: string): NextResponse | null {
+  if (auth.type === "agent" && auth.agentId !== agentId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   return null;
 }

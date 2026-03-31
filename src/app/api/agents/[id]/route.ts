@@ -1,24 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth, withUserAuth } from "@/lib/auth";
 import { getAgentById, updateAgent, deleteAgent } from "@/lib/db/queries";
 import { removeRunnerConfig, loadRunners, saveRunnerConfig } from "@/lib/runners";
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const GET = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const agent = getAgentById(id);
   if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
   return NextResponse.json(agent);
-}
+});
 
-export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const PUT = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const existing = getAgentById(id);
   if (!existing) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
@@ -38,16 +30,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   return NextResponse.json(updated);
-}
+});
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-  if (auth!.type !== "user") {
-    return NextResponse.json({ error: "Only users can delete agents" }, { status: 403 });
-  }
-
+export const DELETE = withUserAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const agent = getAgentById(id);
   deleteAgent(id);
@@ -55,4 +40,4 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     removeRunnerConfig(id);
   }
   return NextResponse.json({ ok: true });
-}
+});
