@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
+import { useApp } from "@/components/app/app-context";
 import { SchedulePicker, parseSchedule, serializeSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
   Settings, Trash2, X, Plus, Pin,
@@ -59,6 +60,7 @@ export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { timezone } = useApp();
 
   const { data: job = null, isLoading: loading } = useQuery<Job | null>({
     queryKey: ["jobs", id],
@@ -250,7 +252,7 @@ export default function JobDetailPage() {
         </div>
         <div className="flex items-center gap-2 text-sm">
           <CalendarClock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span className="text-muted-foreground truncate">{formatTimestamp(job.next_run_at) || "—"}</span>
+          <span className="text-muted-foreground truncate">{formatTimestamp(job.next_run_at, timezone) || "—"}</span>
         </div>
       </div>
 

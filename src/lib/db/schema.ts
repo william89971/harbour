@@ -150,6 +150,12 @@ export function initializeSchema(db: Database.Database) {
       PRIMARY KEY (job_id, database_id)
     );
 
+    -- System settings: key-value store
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     -- Environment variables: encrypted key-value pairs injected at runtime
     CREATE TABLE IF NOT EXISTS env_vars (
       id TEXT PRIMARY KEY,
@@ -299,4 +305,12 @@ export function initializeSchema(db: Database.Database) {
 
   // Ensure encryption key exists (generates on first run)
   try { encrypt("init"); } catch { /* non-fatal */ }
+
+  // Initialize default settings on first run
+  const hasTz = db.prepare(`SELECT 1 FROM settings WHERE key = 'timezone'`).get();
+  if (!hasTz) {
+    const systemTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`).run("timezone", systemTz);
+  }
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`).run("signup_enabled", "true");
 }

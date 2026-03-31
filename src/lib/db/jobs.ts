@@ -3,6 +3,7 @@ import { v4 as uuid } from "uuid";
 import { getNextRunTime } from "../schedule";
 import { listPinnedDocIds } from "./docs";
 import { listPinnedEnvVarIds } from "./env-vars";
+import { getTimezone } from "./settings";
 
 export function createJob(agentId: string, data: {
   name: string;
@@ -18,7 +19,7 @@ export function createJob(agentId: string, data: {
 }) {
   const db = getDb();
   const id = uuid();
-  const nextRunAt = data.active !== false ? getNextRunTime(data.schedule) : null;
+  const nextRunAt = data.active !== false ? getNextRunTime(data.schedule, undefined, getTimezone()) : null;
   db.prepare(`
     INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, check_command, model, thinking, active, next_run_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -207,7 +208,7 @@ export function advanceJobSchedule(jobId: string) {
   const job = db.prepare(`SELECT schedule FROM jobs WHERE id = ?`).get(jobId) as any;
   if (!job?.schedule) return;
 
-  const nextRunAt = getNextRunTime(job.schedule);
+  const nextRunAt = getNextRunTime(job.schedule, undefined, getTimezone());
   if (nextRunAt !== null) {
     db.prepare(`UPDATE jobs SET next_run_at = ?, updated_at = unixepoch() WHERE id = ?`).run(nextRunAt, jobId);
   }

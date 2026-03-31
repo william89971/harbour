@@ -2,6 +2,7 @@ import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 import { getNextRunTime } from "../schedule";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
+import { getTimezone } from "./settings";
 
 export function createRun(jobId: string, agentId: string) {
   const db = getDb();
@@ -375,7 +376,7 @@ function advanceSchedule(jobId: string) {
   const db = getDb();
   const job = db.prepare(`SELECT schedule FROM jobs WHERE id = ?`).get(jobId) as any;
   if (!job?.schedule) return;
-  const nextRunAt = getNextRunTime(job.schedule);
+  const nextRunAt = getNextRunTime(job.schedule, undefined, getTimezone());
   if (nextRunAt !== null) {
     db.prepare(`UPDATE jobs SET next_run_at = ?, updated_at = unixepoch() WHERE id = ?`).run(nextRunAt, jobId);
   }

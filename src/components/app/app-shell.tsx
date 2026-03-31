@@ -33,6 +33,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }).catch(() => { window.location.href = "/login"; });
   }, [router]);
 
+  // Fetch system timezone
+  const { data: timezone = Intl.DateTimeFormat().resolvedOptions().timeZone } = useQuery({
+    queryKey: ["settings", "timezone"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings");
+      if (!res.ok) return Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const data = await res.json();
+      return data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    },
+    enabled: !!user,
+  });
+
   // Poll waiting runs count
   const { data: waitingCount = 0 } = useQuery({
     queryKey: ["runs", "waiting-count"],
@@ -84,7 +96,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <AppContext.Provider value={{ user, waitingCount }}>
+    <AppContext.Provider value={{ user, waitingCount, timezone }}>
       <div className="flex h-dvh standalone:h-screen">
         <aside className="hidden w-56 shrink-0 border-r bg-sidebar md:block">
           {sidebar}

@@ -127,13 +127,62 @@ function parseCronDays(dow: string): number[] {
 // Next run time: only handles canonical JSON (all storage is normalized)
 // ---------------------------------------------------------------------------
 
-export function getNextRunTime(schedule: string, from?: Date): number | null {
+// Get current time components in a given timezone
+function nowInTz(tz: string, from?: Date) {
+  const now = from || new Date();
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    weekday: "short", hour12: false,
+  }).formatToParts(now);
+
+  const get = (type: string) => parts.find(p => p.type === type)?.value || "";
+  const weekdayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+  return {
+    realNow: now,
+    year: parseInt(get("year")),
+    month: parseInt(get("month")),
+    day: parseInt(get("day")),
+    weekday: weekdayMap[get("weekday")] ?? 0,
+    hour: parseInt(get("hour")),
+    minute: parseInt(get("minute")),
+  };
+}
+
+// Convert a date/time in a given timezone to a UTC epoch (seconds)
+function tzDateToEpoch(tz: string, year: number, month: number, day: number, hour: number, minute: number): number {
+  // Build an ISO-ish string and find the UTC epoch by checking what that moment is in the timezone
+  const probe = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
+  // Find the offset: what does this UTC moment look like in the target timezone?
+  const inTz = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(probe);
+  const get = (type: string) => parseInt(inTz.find(p => p.type === type)?.value || "0");
+  const tzHour = get("hour");
+  const tzMinute = get("minute");
+  const tzDay = get("day");
+
+  // Difference between what we wanted and what we got
+  const dayDiff = day - tzDay;
+  const hourDiff = hour - tzHour;
+  const minuteDiff = minute - tzMinute;
+  const offsetMs = (dayDiff * 86400 + hourDiff * 3600 + minuteDiff * 60) * 1000;
+
+  return Math.floor((probe.getTime() + offsetMs) / 1000);
+}
+
+export function getNextRunTime(schedule: string, from?: Date, timezone?: string): number | null {
+  const tz = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const now = from || new Date();
 
   try {
     const parsed = JSON.parse(schedule);
 
     if ("every" in parsed && typeof parsed.every === "number") {
+      // Intervals are timezone-agnostic
       const ms = parsed.every * 60000;
       const next = Math.ceil(now.getTime() / ms) * ms;
       return Math.floor(next / 1000);
@@ -141,22 +190,27 @@ export function getNextRunTime(schedule: string, from?: Date): number | null {
 
     if (parsed.days && parsed.time) {
       const [h, m] = parsed.time.split(":").map(Number);
-      const currentDay = now.getDay();
+      const tn = nowInTz(tz, now);
       const sortedDays = parsed.days.slice().sort((a: number, b: number) => a - b);
 
       for (let offset = 0; offset <= 7; offset++) {
-        const candidateDay = (currentDay + offset) % 7;
-        if (!sortedDays.includes(candidateDay)) continue;
-        const candidate = new Date(now);
-        candidate.setDate(candidate.getDate() + offset);
-        candidate.setHours(h, m, 0, 0);
-        if (candidate > now) return Math.floor(candidate.getTime() / 1000);
+        const candidateWeekday = (tn.weekday + offset) % 7;
+        if (!sortedDays.includes(candidateWeekday)) continue;
+
+        // Calculate the calendar date for this offset
+        const candidateDate = new Date(Date.UTC(tn.year, tn.month - 1, tn.day + offset));
+        const cy = candidateDate.getUTCFullYear();
+        const cm = candidateDate.getUTCMonth() + 1;
+        const cd = candidateDate.getUTCDate();
+        const epoch = tzDateToEpoch(tz, cy, cm, cd, h, m);
+
+        if (epoch > Math.floor(now.getTime() / 1000)) return epoch;
       }
+
       // Wrap to next week
-      const candidate = new Date(now);
-      candidate.setDate(candidate.getDate() + ((sortedDays[0] - currentDay + 7) % 7 || 7));
-      candidate.setHours(h, m, 0, 0);
-      return Math.floor(candidate.getTime() / 1000);
+      const wrapOffset = (sortedDays[0] - tn.weekday + 7) % 7 || 7;
+      const wrapDate = new Date(Date.UTC(tn.year, tn.month - 1, tn.day + wrapOffset));
+      return tzDateToEpoch(tz, wrapDate.getUTCFullYear(), wrapDate.getUTCMonth() + 1, wrapDate.getUTCDate(), h, m);
     }
   } catch {
     // Not valid JSON

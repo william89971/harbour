@@ -11,6 +11,7 @@ import {
   Database,
   KeyRound,
   Users,
+  Settings,
 } from "lucide-react";
 
 export function NavLinks({ onClick }: { onClick?: () => void }) {
@@ -25,6 +26,7 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
     { href: "/databases", label: "Databases", icon: Database },
     { href: "/env-vars", label: "Env Vars", icon: KeyRound },
     { href: "/users", label: "Users", icon: Users },
+    { href: "/settings", label: "Settings", icon: Settings },
   ];
 
   return (
