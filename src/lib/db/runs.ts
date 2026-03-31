@@ -1,6 +1,7 @@
 import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 import { getNextRunTime } from "../schedule";
+import { getDecryptedEnvVarsForJob } from "./env-vars";
 
 export function createRun(jobId: string, agentId: string) {
   const db = getDb();
@@ -350,6 +351,9 @@ function buildRunPayload(runId: string) {
     ).all();
   }
 
+  // Decrypt env vars for this job
+  const env = getDecryptedEnvVarsForJob(run.job_id);
+
   return {
     run: { id: run.id, status: run.status, activity: run.activity },
     job: {
@@ -362,6 +366,7 @@ function buildRunPayload(runId: string) {
     },
     docs,
     data,
+    env,
   };
 }
 

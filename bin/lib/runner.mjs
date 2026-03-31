@@ -97,6 +97,14 @@ function buildPrompt(payload, apiKey, isResume) {
     }
   }
 
+  if (payload.env && Object.keys(payload.env).length > 0) {
+    prompt += `## Environment Variables\n\nThese credentials and secrets are available for this run. Use them when making API calls or authenticating with services.\n\n`;
+    for (const [key, value] of Object.entries(payload.env)) {
+      prompt += `- \`${key}\`: \`${value}\`\n`;
+    }
+    prompt += "\n";
+  }
+
   if (payload.job?.check) {
     prompt += `## Pre-run Check\n\nBefore starting, run this command: \`${payload.job.check}\`\nIf it returns non-zero, skip this run by setting status to "skipped".\n\n`;
   }

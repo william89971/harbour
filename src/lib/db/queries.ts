@@ -4,3 +4,4 @@ export * from "./jobs";
 export * from "./runs";
 export * from "./docs";
 export * from "./database";
+export * from "./env-vars";

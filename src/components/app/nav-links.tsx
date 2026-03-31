@@ -9,6 +9,7 @@ import {
   Bot,
   FileText,
   Database,
+  KeyRound,
   Users,
 } from "lucide-react";
 
@@ -22,6 +23,7 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
     { href: "/agents", label: "Agents", icon: Bot },
     { href: "/docs", label: "Docs", icon: FileText },
     { href: "/databases", label: "Databases", icon: Database },
+    { href: "/env-vars", label: "Env Vars", icon: KeyRound },
     { href: "/users", label: "Users", icon: Users },
   ];
 

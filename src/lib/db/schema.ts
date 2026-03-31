@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import path from "path";
 import { normalizeSchedule } from "../schedule";
+import { encrypt } from "../encryption";
 
 const DB_PATH = process.env.HARBOUR_DB_PATH || path.join(process.cwd(), "harbour.db");
 
@@ -149,6 +150,23 @@ export function initializeSchema(db: Database.Database) {
       PRIMARY KEY (job_id, database_id)
     );
 
+    -- Environment variables: encrypted key-value pairs injected at runtime
+    CREATE TABLE IF NOT EXISTS env_vars (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      encrypted_value TEXT NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Job-env linking: which env vars a job references
+    CREATE TABLE IF NOT EXISTS job_env_vars (
+      job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      env_var_id TEXT NOT NULL REFERENCES env_vars(id) ON DELETE CASCADE,
+      PRIMARY KEY (job_id, env_var_id)
+    );
+
     -- Run output: raw streaming events from CLI agent execution
     CREATE TABLE IF NOT EXISTS run_output (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -278,4 +296,7 @@ export function initializeSchema(db: Database.Database) {
   if (!jobCols2.some((c: any) => c.name === "thinking")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN thinking TEXT`);
   }
+
+  // Ensure encryption key exists (generates on first run)
+  try { encrypt("init"); } catch { /* non-fatal */ }
 }

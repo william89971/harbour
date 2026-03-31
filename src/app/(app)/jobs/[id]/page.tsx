@@ -16,7 +16,7 @@ import { BackLink } from "@/components/app/back-link";
 import { SchedulePicker, parseSchedule, serializeSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
   Settings, Trash2, X, Plus, Pin,
-  FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock, Cpu,
+  FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock, Cpu, KeyRound,
 } from "lucide-react";
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { timeAgo, formatTimestamp } from "@/lib/time";
@@ -29,6 +29,7 @@ type Job = {
   active: number; last_run_at: number | null; next_run_at: number | null;
   docs: { id: string; title: string }[];
   databases: { id: string; name: string; table_name: string }[];
+  envVars: { id: string; name: string }[];
 };
 type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
@@ -110,6 +111,16 @@ export default function JobDetailPage() {
     refetchInterval: 5000,
   });
 
+  const { data: allEnvVars = [] } = useQuery<{ id: string; name: string; pinned: number }[]>({
+    queryKey: ["env-vars"],
+    queryFn: async () => {
+      const res = await fetch("/api/env-vars");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
   const recentArr = Array.isArray(recentRunsData) ? recentRunsData : [];
   const waitingArr = Array.isArray(waitingRunsData) ? waitingRunsData : [];
   const specificRuns = [
@@ -119,6 +130,7 @@ export default function JobDetailPage() {
 
   const [showEdit, setShowEdit] = useState(false);
   const [showDocs, setShowDocs] = useState(false);
+  const [showEnvVars, setShowEnvVars] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editInstructions, setEditInstructions] = useState("");
@@ -169,6 +181,20 @@ export default function JobDetailPage() {
 
   async function handleUnlinkDoc(docId: string) {
     await fetch(`/api/jobs/${id}/docs/${docId}`, { method: "DELETE" });
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
+  }
+
+  async function handleLinkEnvVar(envVarId: string) {
+    await fetch(`/api/jobs/${id}/env-vars`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ envVarId }),
+    });
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
+  }
+
+  async function handleUnlinkEnvVar(envVarId: string) {
+    await fetch(`/api/jobs/${id}/env-vars/${envVarId}`, { method: "DELETE" });
     queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
@@ -283,6 +309,35 @@ export default function JobDetailPage() {
         </section>
       )}
 
+      {/* Env Vars */}
+      <section>
+        <div className="flex items-center justify-between mb-2">
+          <SectionHeader>Env Vars</SectionHeader>
+          <Button variant="outline" size="sm" onClick={() => setShowEnvVars(true)}>
+            <Plus className="h-3.5 w-3.5 mr-1" /> Add
+          </Button>
+        </div>
+        {job.envVars.length === 0 ? (
+          <EmptyState>No env vars linked to this job.</EmptyState>
+        ) : (
+          <div className="space-y-2">
+            {job.envVars.map(ev => (
+              <div key={ev.id} className="flex items-center gap-3 rounded-lg border p-3 group">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <KeyRound className="h-4 w-4 text-primary" />
+                </div>
+                <Link href={`/env-vars/${ev.id}`} className="text-sm font-mono font-medium flex-1 min-w-0 truncate hover:text-primary transition-colors">
+                  {ev.name}
+                </Link>
+                <button onClick={() => handleUnlinkEnvVar(ev.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all shrink-0" title="Remove">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       {/* Run History */}
       <div className="space-y-3">
         <SectionHeader>Run History</SectionHeader>
@@ -331,6 +386,40 @@ export default function JobDetailPage() {
           })()}
           <DialogFooter>
             <Button variant="ghost" onClick={() => setShowDocs(false)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Env Vars Dialog */}
+      <Dialog open={showEnvVars} onOpenChange={setShowEnvVars}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add Env Vars</DialogTitle></DialogHeader>
+          {(() => {
+            const linkedIds = new Set(job.envVars.map(ev => ev.id));
+            const available = allEnvVars.filter(ev => !linkedIds.has(ev.id));
+            if (available.length === 0) {
+              return <p className="text-sm text-muted-foreground py-4 text-center">All env vars are already linked to this job.</p>;
+            }
+            return (
+              <div className="space-y-1 max-h-80 overflow-y-auto">
+                {available.map(ev => (
+                  <button
+                    key={ev.id}
+                    onClick={async () => { await handleLinkEnvVar(ev.id); }}
+                    className="flex items-center gap-3 w-full rounded-lg p-2.5 text-left hover:bg-accent/50 transition-colors"
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <KeyRound className="h-4 w-4 text-primary" />
+                    </div>
+                    <span className="text-sm font-mono font-medium flex-1 min-w-0 truncate">{ev.name}</span>
+                    {ev.pinned === 1 && <Pin className="h-3 w-3 text-muted-foreground shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowEnvVars(false)}>Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
