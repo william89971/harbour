@@ -223,7 +223,9 @@ async function runSingleAgent(runner) {
   // Check if CLI exited with error
   if (result.code !== 0) {
     console.error(`  [${agentName}] CLI exited with code ${result.code}`);
-    const errorContent = output.length > 4000 ? output.slice(-4000) : output;
+    // Include stderr in the error output — auth failures, missing config, etc.
+    const errorOutput = result.stderr ? `${output}\n\nstderr:\n${result.stderr}` : output;
+    const errorContent = errorOutput.length > 4000 ? errorOutput.slice(-4000) : errorOutput;
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
         content: `Agent encountered an error (exit code ${result.code}):\n\n${errorContent}`,

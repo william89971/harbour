@@ -338,7 +338,7 @@ export function ensureWorkingDir(agentName) {
  * Run a CLI tool, streaming JSONL output line-by-line to onLine callback.
  * Returns { code, stdout, stderr } when the process exits.
  */
-export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, onLine } = {}) {
+export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, onLine } = {}) {
   return new Promise((resolve, reject) => {
     // Build clean environment: strip Claude Code nesting guards
     const env = { ...process.env };
@@ -354,11 +354,29 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, onLi
       timeout: timeoutMs,
     });
 
+    // Close stdin immediately — CLI tools should not wait for interactive input
+    child.stdin.end();
+
     let stdout = "";
     let stderr = "";
     let lineBuffer = "";
+    let gotOutput = false;
+
+    // Kill the process if no stdout arrives within the startup window.
+    // Catches auth prompts, interactive login hangs, etc.
+    const startupTimer = setTimeout(() => {
+      if (!gotOutput) {
+        child.kill("SIGTERM");
+        // Give it a moment to exit, then force kill
+        setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 2000);
+      }
+    }, startupTimeoutMs);
 
     child.stdout.on("data", (data) => {
+      if (!gotOutput) {
+        gotOutput = true;
+        clearTimeout(startupTimer);
+      }
       const chunk = data.toString();
       stdout += chunk;
 
@@ -376,8 +394,9 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, onLi
 
     child.stderr.on("data", (data) => { stderr += data.toString(); });
 
-    child.on("error", (err) => reject(err));
+    child.on("error", (err) => { clearTimeout(startupTimer); reject(err); });
     child.on("close", (code) => {
+      clearTimeout(startupTimer);
       // Flush remaining buffer
       if (onLine && lineBuffer.trim()) {
         onLine(lineBuffer.trim());
