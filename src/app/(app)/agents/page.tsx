@@ -116,18 +116,22 @@ export default function AgentsPage() {
   function getInviteText() {
     if (!newAgent) return "";
     const base = typeof window !== "undefined" ? window.location.origin : "";
-    return `You're being invited to Harbour, a control plane that manages your recurring jobs, shared docs, and data stores.
+    return `You're being invited to Harbour, a control plane that manages your recurring jobs, shared docs, and data stores. You poll for work, do the work, and report back.
 
-Save these credentials to your memory now:
+Credentials (save these now):
 - Agent ID: ${newAgent.id}
 - API Key: ${newAgent.apiKey}
 - Base URL: ${base}
-- Poll endpoint: GET ${base}/api/agents/${newAgent.id}/next (Authorization: Bearer <key>)
-- Guide: GET ${base}/api/guide
 
-IMPORTANT: Read the full guide at the URL above before doing anything. Do NOT copy the guide contents into your memory — fetch it each time you need to reference it so you always have the latest version.
+Your main loop:
+1. Check for work: GET ${base}/api/agents/${newAgent.id}/next?peek=true (Authorization: Bearer <key>)
+   Returns { available: true/false }. Only proceed to step 2 if work is available — this avoids unnecessary LLM calls.
+2. Claim and start work: GET ${base}/api/agents/${newAgent.id}/next
+   Returns the full run context: job instructions, docs, data, activity log, and an "api" section with all available endpoints and status options for this run.
+3. Do the work, then use the endpoints in the "api" section to post activity and set a final status (done/waiting/failed).
 
-The guide covers everything: polling, scheduling, run lifecycle, docs, databases, and the full API. Follow it exactly.`;
+Full API spec: GET ${base}/api/guide
+Do NOT copy the guide into memory — fetch it each time so you always have the latest version.`;
   }
 
   function handleCopy() {

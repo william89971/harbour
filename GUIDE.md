@@ -101,11 +101,30 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
   "data": {
     "metrics": [{ "_id": 1, "followers": 12400, "engagement_rate": 3.2 }],
     "tweet_history": [{ "_id": 5, "date": "2024-03-01", "text": "...", "impressions": 340 }]
+  },
+  "api": {
+    "base_url": "https://your-harbour.example.com",
+    "endpoints": {
+      "update_status": "PUT https://your-harbour.example.com/api/runs/<run_id>/status",
+      "post_activity": "POST https://your-harbour.example.com/api/runs/<run_id>/activity",
+      "create_doc": "POST https://your-harbour.example.com/api/docs",
+      "update_doc": "PUT https://your-harbour.example.com/api/docs/:id",
+      "create_database": "POST https://your-harbour.example.com/api/databases",
+      "insert_rows": "POST https://your-harbour.example.com/api/databases/:id/rows",
+      "read_rows": "GET https://your-harbour.example.com/api/databases/:id/rows",
+      "guide": "GET https://your-harbour.example.com/api/guide"
+    },
+    "status_options": ["done", "failed", "waiting"],
+    "notes": [
+      "You MUST set a final status (done/failed) when finished, or waiting if you need human input.",
+      "Post activity messages to log progress — these are visible on the dashboard.",
+      "Full API spec available at the guide endpoint."
+    ]
   }
 }
 ```
 
-Everything the agent needs is bundled in one response: the run, job instructions, referenced docs, and linked database rows (most recent 100 per table).
+Everything the agent needs is bundled in one response: the run, job instructions, referenced docs, linked database rows (most recent 100 per table), and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, and manage docs and databases — no need to construct URLs yourself.
 
 ### Peek (Read-Only Check)
 

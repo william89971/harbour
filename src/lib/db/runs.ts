@@ -142,6 +142,39 @@ export function listRunActivity(runId: string) {
   return db.prepare(`SELECT * FROM run_activity WHERE run_id = ? ORDER BY created_at ASC`).all(runId);
 }
 
+// Run output (streaming events from CLI agents)
+
+export type RunOutputEvent = {
+  id?: number;
+  run_id: string;
+  event_type: string;
+  content: string | null;
+  tool_name: string | null;
+  created_at?: number;
+};
+
+export function addRunOutput(runId: string, events: Omit<RunOutputEvent, "run_id" | "id" | "created_at">[]) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT INTO run_output (run_id, event_type, content, tool_name)
+    VALUES (?, ?, ?, ?)
+  `);
+  const insertMany = db.transaction((evts: typeof events) => {
+    for (const e of evts) {
+      stmt.run(runId, e.event_type, e.content || null, e.tool_name || null);
+    }
+  });
+  insertMany(events);
+  db.prepare(`UPDATE runs SET updated_at = unixepoch() WHERE id = ?`).run(runId);
+}
+
+export function listRunOutput(runId: string, afterId = 0) {
+  const db = getDb();
+  return db.prepare(`
+    SELECT * FROM run_output WHERE run_id = ? AND id > ? ORDER BY id ASC
+  `).all(runId, afterId) as RunOutputEvent[];
+}
+
 // Fail runs that have exceeded their job's timeout
 function failStaleRuns(agentId: string) {
   const db = getDb();

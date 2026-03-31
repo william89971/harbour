@@ -149,6 +149,16 @@ export function initializeSchema(db: Database.Database) {
       PRIMARY KEY (job_id, database_id)
     );
 
+    -- Run output: raw streaming events from CLI agent execution
+    CREATE TABLE IF NOT EXISTS run_output (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      content TEXT,
+      tool_name TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
@@ -156,6 +166,7 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
     CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id);
+    CREATE INDEX IF NOT EXISTS idx_run_output_run ON run_output(run_id);
 
     CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id);
     CREATE INDEX IF NOT EXISTS idx_database_migrations_db ON database_migrations(database_id);
