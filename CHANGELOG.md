@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.2.0 — 2026-03-31
 
 ### Environment Variables
 - Encrypted env vars (AES-256-GCM) with key stored at `~/.harbour/encryption.key`
@@ -51,11 +51,21 @@
 - Consistent empty states with centered icons matching nav menu across all views
 - Agent detail shows type (Harbour/External), CLI tool badge, model, and thinking level
 - Invite and API key buttons only shown for external agents
+- Error feedback on all dashboard mutation operations
 
 ### Runner Reliability
 - Startup timeout (30s) kills hung CLI processes (e.g. unauthenticated Gemini)
 - Stdin closed immediately to prevent interactive prompt hangs
 - Stderr included in error activity logs for better diagnostics
+
+### Security & Code Quality
+- `withAuth`/`withUserAuth` higher-order function wrappers replace manual auth boilerplate across all 36 API routes
+- Agent ownership enforcement: agents can only act on their own resources (runs, status, activity, output)
+- `orderBy` parameter validated against actual column names in database rows endpoint
+- Composite indexes on `jobs(agent_id, active, next_run_at)` and `run_activity(run_id, created_at)`
+- `getAgentNextRun()`, `createJob()`, and `createOneOffRun()` wrapped in transactions for atomicity
+- Deduplicated `advanceSchedule` — single implementation in `jobs.ts`
+- Shared `ModelThinkingSelect` component replaces 4 duplicate select blocks
 
 ## v1.1.0 — 2026-03-30
 

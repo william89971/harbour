@@ -9,13 +9,15 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 ## Key paths
 
 - `src/app/(app)/` — dashboard pages (runs, jobs, agents, docs, databases, env-vars, settings)
-- `src/app/api/` — API routes (agent-facing + dashboard)
+- `src/app/api/` — API routes (agent-facing + dashboard), all use `withAuth`/`withUserAuth` wrappers
+- `src/lib/auth.ts` — `withAuth`, `withUserAuth`, `requireAgentOwnership` HOF wrappers for API routes
 - `src/lib/db/` — database schema, queries, migrations
 - `src/lib/encryption.ts` — AES-256-GCM encryption for env vars
 - `src/lib/schedule.ts` — schedule parsing and timezone-aware next-run-time calculation
 - `src/lib/cli-config.ts` — shared CLI tool config (models, thinking options per tool)
 - `src/lib/runners.ts` — harbour agent runner config (read/write ~/.harbour/runners.json)
 - `src/components/app/create-dialog.tsx` — unified New Run / New Job dialog (shared component)
+- `src/components/app/model-thinking-select.tsx` — shared Model/Thinking select for CLI agents
 - `bin/` — CLI entry point and agent runner (harbour agents, providers, launchd install)
 - `GUIDE.md` — agent-facing API contract, served at `/api/guide`
 
@@ -31,6 +33,8 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - Env vars are encrypted with AES-256-GCM. Key at `~/.harbour/encryption.key` (auto-generated on first run).
 - System timezone (configured in Settings) is used for all schedule calculations.
 - Model and thinking/effort can be set per agent (default) and overridden per job.
+- API routes use `withAuth(handler)` or `withUserAuth(handler)` — never inline auth checks. Agent-facing mutation routes use `requireAgentOwnership()` to enforce scope.
+- Job and run creation functions (`createJob`, `createOneOffRun`, `getAgentNextRun`) are wrapped in transactions.
 
 ## Browser testing / screenshots
 
