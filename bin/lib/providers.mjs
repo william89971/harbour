@@ -185,10 +185,14 @@ const PROVIDERS = {
         return { events: [] };
       }
     },
+    // Only use the last assistant message as the activity summary. Codex emits
+    // multiple agent_message items during a run (narration before each tool call,
+    // then a final summary). Concatenating all of them produces a verbose dump;
+    // the last message is the natural summary of what was done.
     parseResult(stdout) {
       const lines = stdout.trim().split("\n");
       let sessionId = null;
-      let content = "";
+      let lastMessage = "";
 
       for (const line of lines) {
         try {
@@ -198,31 +202,35 @@ const PROVIDERS = {
           }
           if (obj.type === "item.completed" && obj.item) {
             if (obj.item.text) {
-              content += obj.item.text + "\n";
+              lastMessage = obj.item.text;
             } else if (obj.item.content) {
+              let text = "";
               for (const c of obj.item.content) {
                 if (c.type === "output_text" || c.type === "text") {
-                  content += (c.text || "") + "\n";
+                  text += (c.text || "") + "\n";
                 }
               }
+              if (text.trim()) lastMessage = text.trim();
             }
           }
           if (obj.type === "message.completed" && obj.message) {
             if (obj.message.text) {
-              content += obj.message.text + "\n";
+              lastMessage = obj.message.text;
             } else if (obj.message.content) {
+              let text = "";
               for (const c of obj.message.content) {
                 if (c.type === "output_text" || c.type === "text") {
-                  content += (c.text || "") + "\n";
+                  text += (c.text || "") + "\n";
                 }
               }
+              if (text.trim()) lastMessage = text.trim();
             }
           }
         } catch { /* Not JSON line */ }
       }
 
-      if (!content.trim()) content = stdout;
-      return { content: content.trim(), sessionId };
+      if (!lastMessage.trim()) lastMessage = stdout;
+      return { content: lastMessage.trim(), sessionId };
     },
   },
 
@@ -278,6 +286,10 @@ const PROVIDERS = {
         return { events: [] };
       }
     },
+    // Only use the last assistant turn as the activity summary. Gemini streams
+    // multiple assistant message deltas across turns — early ones are narration
+    // before tool calls, the final turn is the actual summary. We reset on
+    // tool_result boundaries so we capture only the post-tool response.
     parseResult(stdout) {
       const lines = stdout.trim().split("\n");
       let sessionId = null;
@@ -288,6 +300,9 @@ const PROVIDERS = {
           const obj = JSON.parse(line);
           if (obj.type === "init" && obj.session_id) {
             sessionId = obj.session_id;
+          }
+          if (obj.type === "tool_result") {
+            content = ""; // reset — next assistant messages are the final turn
           }
           if (obj.type === "message" && obj.role === "assistant" && obj.content) {
             content += obj.content;
