@@ -9,13 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
-import { Pencil, Save, X, Trash2, History } from "lucide-react";
+import { Pencil, Save, X, Trash2, History, Pin } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 
 type Doc = {
-  id: string; title: string;
+  id: string; title: string; pinned: number;
   content: string; created_at: number; updated_at: number;
 };
 
@@ -73,6 +73,11 @@ export default function DocDetailPage() {
     router.push("/docs");
   }
 
+  async function handleTogglePin() {
+    await fetch(`/api/docs/${id}/pin`, { method: "POST" });
+    queryClient.invalidateQueries({ queryKey: ["docs", id] });
+  }
+
   async function loadRevisions() {
     const res = await fetch(`/api/docs/${id}/revisions`);
     if (res.ok) setRevisions(await res.json());
@@ -104,6 +109,9 @@ export default function DocDetailPage() {
             </>
           ) : (
             <>
+              <Button variant={doc.pinned ? "default" : "outline"} size="icon" className="h-8 w-8" onClick={handleTogglePin} title={doc.pinned ? "Unpin" : "Pin to all jobs"}>
+                <Pin className="h-3.5 w-3.5" />
+              </Button>
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={loadRevisions} title="Revisions">
                 <History className="h-3.5 w-3.5" />
               </Button>

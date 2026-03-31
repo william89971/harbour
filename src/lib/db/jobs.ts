@@ -1,6 +1,7 @@
 import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 import { getNextRunTime } from "../schedule";
+import { listPinnedDocIds } from "./docs";
 
 export function createJob(agentId: string, data: {
   name: string;
@@ -24,6 +25,14 @@ export function createJob(agentId: string, data: {
     data.checkCommand || null, data.model || null, data.thinking || null,
     data.active !== false ? 1 : 0, nextRunAt
   );
+
+  // Auto-attach pinned docs
+  const pinnedIds = listPinnedDocIds();
+  if (pinnedIds.length > 0) {
+    const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
+    for (const docId of pinnedIds) linkStmt.run(id, docId);
+  }
+
   return getJobById(id);
 }
 
@@ -136,11 +145,11 @@ export function createOneOffRun(agentId: string, data: {
     VALUES (?, ?, ?, ?, '{}', 1, 1, ?)
   `).run(jobId, agentId, data.name, data.instructions || null, runAt);
 
-  if (data.docIds?.length) {
+  // Merge explicitly selected docs with pinned docs
+  const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds()]);
+  if (allDocIds.size > 0) {
     const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
-    for (const docId of data.docIds) {
-      linkStmt.run(jobId, docId);
-    }
+    for (const docId of allDocIds) linkStmt.run(jobId, docId);
   }
 
   // Create the run immediately with 'scheduled' status

@@ -264,6 +264,12 @@ export function initializeSchema(db: Database.Database) {
     db.exec(`ALTER TABLE agents ADD COLUMN thinking TEXT`);
   }
 
+  // Migrations: add pinned column to docs table
+  const docCols2 = db.prepare(`PRAGMA table_info(docs)`).all() as any[];
+  if (!docCols2.some((c: any) => c.name === "pinned")) {
+    db.exec(`ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
+  }
+
   // Migrations: add model and thinking columns to jobs table
   const jobCols2 = db.prepare(`PRAGMA table_info(jobs)`).all() as any[];
   if (!jobCols2.some((c: any) => c.name === "model")) {
