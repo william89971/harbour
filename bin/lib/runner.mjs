@@ -18,7 +18,37 @@ async function apiCall(url, apiKey, method = "GET", body = null) {
   return res.json();
 }
 
-function buildPrompt(payload, isResume) {
+function buildApiPrompt(api, apiKey) {
+  const runStatusUrl = api.endpoints.update_status.replace("PUT ", "");
+  const activityUrl = api.endpoints.post_activity.replace("POST ", "");
+  const guideUrl = api.endpoints.guide.replace("GET ", "");
+
+  return `## Harbour API
+
+Your output will be posted as a comment on this run. Write a clear, concise summary.
+
+You MUST set a final run status when finished. If you don't, the run will be marked as failed.
+Use these curl commands with the provided API key:
+
+Set status to done (completed successfully):
+  curl -X PUT ${runStatusUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"status":"done"}'
+
+Set status to waiting (you need human input — explain what you need in an activity message first):
+  curl -X PUT ${runStatusUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"status":"waiting"}'
+
+Set status to failed (something went wrong):
+  curl -X PUT ${runStatusUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"status":"failed"}'
+
+Post an activity message (visible on dashboard):
+  curl -X POST ${activityUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"content":"your message"}'
+
+Full API spec (docs, databases, etc): ${guideUrl}
+`;
+}
+
+function buildPrompt(payload, apiKey, isResume) {
+  const apiPrompt = payload.api ? buildApiPrompt(payload.api, apiKey) : "";
+
   if (isResume) {
     const activity = payload.run.activity || [];
     const lastAgentIdx = activity.findLastIndex(a => a.author_type === "agent");
@@ -28,7 +58,7 @@ function buildPrompt(payload, isResume) {
       .map(a => `[${a.author_type}] ${a.content}`)
       .join("\n\n");
 
-    return `The human has responded to your previous work. Here is their message:\n\n${humanMessages}\n\nContinue working on this task based on their response.`;
+    return `The human has responded to your previous work. Here is their message:\n\n${humanMessages}\n\nContinue working on this task based on their response.\n\n${apiPrompt}`;
   }
 
   let prompt = "";
@@ -71,9 +101,7 @@ function buildPrompt(payload, isResume) {
     prompt += `## Pre-run Check\n\nBefore starting, run this command: \`${payload.job.check}\`\nIf it returns non-zero, skip this run by setting status to "skipped".\n\n`;
   }
 
-  prompt += `\n## Important\n\n`;
-  prompt += `When you are done, provide a summary of what you did. `;
-  prompt += `If you need human input, clearly state what you need and why.\n`;
+  prompt += apiPrompt;
 
   return prompt;
 }
@@ -113,7 +141,7 @@ async function runSingleAgent(runner) {
   console.log(`  [${agentName}] ${isResume ? "Resuming" : "Starting"} run ${runId} (${payload.job?.name || "one-off"})`);
 
   // Build prompt
-  const prompt = buildPrompt(payload, isResume);
+  const prompt = buildPrompt(payload, apiKey, isResume);
 
   // Build CLI command
   const workingDir = ensureWorkingDir(agentName);
@@ -216,23 +244,36 @@ async function runSingleAgent(runner) {
     console.error(`  [${agentName}] Failed to post activity: ${err.message}`);
   }
 
-  // Mark as done
-  const status = "done";
+  // Check if the agent already set a terminal status (done/failed/waiting/skipped).
+  // If not, the agent didn't follow the instructions — mark as failed.
+  let currentStatus = "running";
   try {
-    await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status });
-  } catch (err) {
-    console.error(`  [${agentName}] Failed to update status: ${err.message}`);
+    const run = await apiCall(`${url}/api/runs/${runId}`, apiKey);
+    currentStatus = run.status;
+  } catch { /* best effort — fall through to failsafe */ }
+
+  const terminalStatuses = ["done", "failed", "waiting", "skipped"];
+  if (!terminalStatuses.includes(currentStatus)) {
+    console.warn(`  [${agentName}] Agent did not set a final status (still "${currentStatus}") — marking as failed`);
+    try {
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+        content: "Run marked as failed: agent did not set a final status.",
+      });
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+    } catch { /* best effort */ }
+    currentStatus = "failed";
   }
 
-  // Save session for potential resume, clean up on completion
-  if (newSessionId) {
+  // Save session for resume if waiting, clean up otherwise
+  if (newSessionId && currentStatus === "waiting") {
     sessions[runId] = { sessionId: newSessionId, cli };
+    saveSessions(sessions);
+  } else {
+    delete sessions[runId];
     saveSessions(sessions);
   }
 
-  delete sessions[runId];
-  saveSessions(sessions);
-  console.log(`  [${agentName}] Run ${runId} completed with status: ${status}`);
+  console.log(`  [${agentName}] Run ${runId} completed with status: ${currentStatus}`);
 }
 
 export async function runAgents() {
