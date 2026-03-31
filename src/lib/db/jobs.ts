@@ -20,28 +20,32 @@ export function createJob(agentId: string, data: {
   const db = getDb();
   const id = uuid();
   const nextRunAt = data.active !== false ? getNextRunTime(data.schedule, undefined, getTimezone()) : null;
-  db.prepare(`
-    INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, check_command, model, thinking, active, next_run_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id, agentId, data.name, data.description || null,
-    data.instructions || null, data.schedule,
-    data.checkCommand || null, data.model || null, data.thinking || null,
-    data.active !== false ? 1 : 0, nextRunAt
-  );
 
-  // Merge explicitly selected docs/env vars with pinned ones
-  const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds()]);
-  if (allDocIds.size > 0) {
-    const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
-    for (const docId of allDocIds) linkStmt.run(id, docId);
-  }
-  const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds()]);
-  if (allEnvVarIds.size > 0) {
-    const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
-    for (const envId of allEnvVarIds) linkStmt.run(id, envId);
-  }
+  const create = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, check_command, model, thinking, active, next_run_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, agentId, data.name, data.description || null,
+      data.instructions || null, data.schedule,
+      data.checkCommand || null, data.model || null, data.thinking || null,
+      data.active !== false ? 1 : 0, nextRunAt
+    );
 
+    // Merge explicitly selected docs/env vars with pinned ones
+    const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds()]);
+    if (allDocIds.size > 0) {
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
+      for (const docId of allDocIds) linkStmt.run(id, docId);
+    }
+    const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds()]);
+    if (allEnvVarIds.size > 0) {
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
+      for (const envId of allEnvVarIds) linkStmt.run(id, envId);
+    }
+  });
+
+  create();
   return getJobById(id);
 }
 
