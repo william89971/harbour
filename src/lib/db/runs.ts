@@ -114,7 +114,7 @@ export function listWaitingRuns() {
   `).all();
 }
 
-export function listRecentRuns(limit = 20) {
+export function listRecentRuns(limit = 10) {
   const db = getDb();
   return db.prepare(`
     SELECT r.*, j.name as job_name, a.name as agent_name

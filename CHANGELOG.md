@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.3.0-dev
+
+### Settings
+- Configurable "Recent Runs Shown" limit — controls how many completed runs display on the main Runs page (default: 10)
+
+### UI
+- Version number shown in sidebar footer and mobile More menu
+
 ## v1.2.0 — 2026-03-31
 
 ### Environment Variables

@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { listRunningRuns, listWaitingRuns, listRecentRuns, listScheduledRuns, createOneOffRun } from "@/lib/db/queries";
+import { getRecentRunsLimit } from "@/lib/db/settings";
 
 export const GET = withAuth(async (req) => {
   const filter = req.nextUrl.searchParams.get("filter");
   if (filter === "waiting") {
     return NextResponse.json(listWaitingRuns());
   }
+  const limit = getRecentRunsLimit();
   if (filter === "recent") {
-    return NextResponse.json(listRecentRuns());
+    return NextResponse.json(listRecentRuns(limit));
   }
 
   // Default: return all sections
@@ -16,7 +18,7 @@ export const GET = withAuth(async (req) => {
     scheduled: listScheduledRuns(),
     running: listRunningRuns(),
     waiting: listWaitingRuns(),
-    recent: listRecentRuns(),
+    recent: listRecentRuns(limit),
   });
 });
 
