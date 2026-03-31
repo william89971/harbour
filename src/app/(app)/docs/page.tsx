@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,19 +16,19 @@ type Doc = { id: string; title: string; updated_at: number };
 
 export default function DocsPage() {
   const router = useRouter();
-  const [docs, setDocs] = useState<Doc[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
   const [newTitle, setNewTitle] = useState("");
 
-  function loadDocs() {
-    fetch("/api/docs").then(r => r.json()).then(data => {
-      setDocs(Array.isArray(data) ? data : []);
-      setLoading(false);
-    });
-  }
-
-  useEffect(() => { loadDocs(); }, []);
+  const { data: docs = [], isLoading: loading } = useQuery<Doc[]>({
+    queryKey: ["docs"],
+    queryFn: async () => {
+      const res = await fetch("/api/docs");
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
+    refetchInterval: 5000,
+  });
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
@@ -200,25 +201,19 @@ function OutputLine({ event }: { event: OutputEvent }) {
 
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const [run, setRun] = useState<Run | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
 
-  const loadRun = useCallback(async () => {
-    const res = await fetch(`/api/runs/${id}`);
-    if (res.ok) setRun(await res.json());
-    setLoading(false);
-  }, [id]);
-
-  useEffect(() => { loadRun(); }, [loadRun]);
-
-  // Auto-refresh for active runs
-  useEffect(() => {
-    if (!run || run.status === "done" || run.status === "failed" || run.status === "skipped") return;
-    const interval = setInterval(loadRun, 10000);
-    return () => clearInterval(interval);
-  }, [run, loadRun]);
+  const { data: run = null, isLoading: loading } = useQuery<Run | null>({
+    queryKey: ["runs", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/runs/${id}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
@@ -231,7 +226,7 @@ export default function RunDetailPage() {
     });
     if (res.ok) {
       setMessage("");
-      loadRun();
+      queryClient.invalidateQueries({ queryKey: ["runs", id] });
     }
     setSending(false);
   }

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -40,8 +41,18 @@ const DEFAULT_MODELS: Record<string, string[]> = {
 };
 
 export default function AgentsPage() {
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  const { data: agents = [], isLoading: loading } = useQuery<Agent[]>({
+    queryKey: ["agents"],
+    queryFn: async () => {
+      const res = await fetch("/api/agents");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -58,13 +69,6 @@ export default function AgentsPage() {
   const [selectedCli, setSelectedCli] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>("");
 
-  async function loadAgents() {
-    const res = await fetch("/api/agents");
-    if (res.ok) setAgents(await res.json());
-    setLoading(false);
-  }
-
-  useEffect(() => { loadAgents(); }, []);
 
   async function loadCliTools() {
     setLoadingTools(true);
@@ -108,7 +112,7 @@ export default function AgentsPage() {
       setNewAgent({ id: data.id, name: data.name, apiKey: data.apiKey, type: agentType || "external" });
       setName("");
       setDescription("");
-      loadAgents();
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
     }
     setCreating(false);
   }

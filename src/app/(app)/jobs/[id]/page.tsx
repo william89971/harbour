@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/app/section-header";
@@ -54,10 +55,55 @@ function InstructionsBlock({ text }: { text: string }) {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const [job, setJob] = useState<Job | null>(null);
-  const [runs, setRuns] = useState<Run[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [allDocs, setAllDocs] = useState<{ id: string; title: string }[]>([]);
+  const queryClient = useQueryClient();
+
+  const { data: job = null, isLoading: loading } = useQuery<Job | null>({
+    queryKey: ["jobs", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/jobs/${id}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: recentRunsData = [] } = useQuery({
+    queryKey: ["runs", "recent"],
+    queryFn: async () => {
+      const res = await fetch("/api/runs?filter=recent");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: waitingRunsData = [] } = useQuery({
+    queryKey: ["runs", "waiting"],
+    queryFn: async () => {
+      const res = await fetch("/api/runs?filter=waiting");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: allDocs = [] } = useQuery<{ id: string; title: string }[]>({
+    queryKey: ["docs"],
+    queryFn: async () => {
+      const res = await fetch("/api/docs");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const recentArr = Array.isArray(recentRunsData) ? recentRunsData : [];
+  const waitingArr = Array.isArray(waitingRunsData) ? waitingRunsData : [];
+  const specificRuns = [
+    ...waitingArr.filter((r: any) => r.job_id === id),
+    ...recentArr.filter((r: any) => r.job_id === id),
+  ];
+
   const [showEdit, setShowEdit] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
@@ -65,53 +111,6 @@ export default function JobDetailPage() {
   const [editSchedule, setEditSchedule] = useState(parseSchedule(null));
   const [editCheck, setEditCheck] = useState("");
   const [editTimeout, setEditTimeout] = useState(30);
-
-  const loadAll = useCallback(async () => {
-    const [jobRes, runsRes, docsRes] = await Promise.all([
-      fetch(`/api/jobs/${id}`),
-      fetch(`/api/runs?filter=recent`),
-      fetch(`/api/docs`),
-    ]);
-    if (jobRes.ok) {
-      const j = await jobRes.json();
-      setJob(j);
-      setEditName(j.name);
-      setEditDesc(j.description || "");
-      setEditInstructions(j.instructions || "");
-      setEditSchedule(parseSchedule(j.schedule));
-      setEditCheck(j.check_command || "");
-      setEditTimeout(j.timeout_minutes ?? 30);
-    }
-    if (runsRes.ok) {
-      const allRuns = await runsRes.json();
-      setRuns(Array.isArray(allRuns) ? allRuns : []);
-    }
-    if (docsRes.ok) {
-      setAllDocs(await docsRes.json());
-    }
-    setLoading(false);
-  }, [id]);
-
-  useEffect(() => { loadAll(); }, [loadAll]);
-
-  // Also load runs by this job specifically
-  const jobRuns = runs; // We'll fetch job-specific runs below
-  const [specificRuns, setSpecificRuns] = useState<Run[]>([]);
-
-  useEffect(() => {
-    if (!job) return;
-    // Get all recent runs and filter
-    fetch("/api/runs?filter=recent").then(r => r.json()).then(data => {
-      const arr = Array.isArray(data) ? data : [];
-      setSpecificRuns(arr.filter((r: any) => r.job_id === id));
-    });
-    // Also get waiting runs
-    fetch("/api/runs?filter=waiting").then(r => r.json()).then(data => {
-      const arr = Array.isArray(data) ? data : [];
-      const waiting = arr.filter((r: any) => r.job_id === id);
-      setSpecificRuns(prev => [...waiting, ...prev]);
-    });
-  }, [job, id]);
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
@@ -128,7 +127,7 @@ export default function JobDetailPage() {
       }),
     });
     setShowEdit(false);
-    loadAll();
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleToggleActive() {
@@ -138,7 +137,7 @@ export default function JobDetailPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ active: !job.active }),
     });
-    loadAll();
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleLinkDoc(docId: string) {
@@ -147,12 +146,12 @@ export default function JobDetailPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ docId }),
     });
-    loadAll();
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleUnlinkDoc(docId: string) {
     await fetch(`/api/jobs/${id}/docs/${docId}`, { method: "DELETE" });
-    loadAll();
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleDelete() {
@@ -180,7 +179,7 @@ export default function JobDetailPage() {
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleToggleActive} title={job.active ? "Pause" : "Resume"}>
             {job.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowEdit(true)} title="Edit">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditCheck(job.check_command || ""); setEditTimeout(job.timeout_minutes ?? 30); } setShowEdit(true); }} title="Edit">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>

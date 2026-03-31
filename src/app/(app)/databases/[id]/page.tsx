@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BackLink } from "@/components/app/back-link";
@@ -39,31 +40,36 @@ function formatCell(value: any): string {
 export default function DatabaseDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const [db, setDb] = useState<DatabaseDetail | null>(null);
-  const [rowsData, setRowsData] = useState<RowsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const pageSize = 50;
 
-  const loadDb = useCallback(async () => {
-    const res = await fetch(`/api/databases/${id}`);
-    if (res.ok) setDb(await res.json());
-  }, [id]);
+  const { data: db = null, isLoading: dbLoading } = useQuery<DatabaseDetail | null>({
+    queryKey: ["databases", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/databases/${id}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
 
-  const loadRows = useCallback(async () => {
-    const res = await fetch(`/api/databases/${id}/rows?limit=${pageSize}&offset=${page * pageSize}`);
-    if (res.ok) setRowsData(await res.json());
-  }, [id, page]);
+  const { data: rowsData = null, isLoading: rowsLoading } = useQuery<RowsResponse | null>({
+    queryKey: ["databases", id, "rows", page],
+    queryFn: async () => {
+      const res = await fetch(`/api/databases/${id}/rows?limit=${pageSize}&offset=${page * pageSize}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const loading = dbLoading || rowsLoading;
 
   async function handleDelete() {
     if (!confirm(`Delete "${db?.name}"? The table and all its data will be permanently removed.`)) return;
     await fetch(`/api/databases/${id}`, { method: "DELETE" });
     router.push("/databases");
   }
-
-  useEffect(() => {
-    Promise.all([loadDb(), loadRows()]).then(() => setLoading(false));
-  }, [loadDb, loadRows]);
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
   if (!db) return <div className="text-sm text-muted-foreground py-12 text-center">Database not found.</div>;

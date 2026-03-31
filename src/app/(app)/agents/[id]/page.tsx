@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/app/section-header";
@@ -27,12 +28,54 @@ type Run = { id: string; status: string; job_name: string; created_at: number; c
 export default function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const [agent, setAgent] = useState<Agent | null>(null);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [waitingRuns, setWaitingRuns] = useState<Run[]>([]);
-  const [pendingRuns, setPendingRuns] = useState<Run[]>([]);
-  const [recentRuns, setRecentRuns] = useState<Run[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  const { data: agentData, isLoading: agentLoading } = useQuery({
+    queryKey: ["agents", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${id}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: jobs = [] } = useQuery<Job[]>({
+    queryKey: ["agents", id, "jobs"],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${id}/jobs`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: waitingData = [] } = useQuery({
+    queryKey: ["runs", "waiting"],
+    queryFn: async () => {
+      const res = await fetch("/api/runs?filter=waiting");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: recentData = [] } = useQuery({
+    queryKey: ["runs", "recent"],
+    queryFn: async () => {
+      const res = await fetch("/api/runs?filter=recent");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const agent: Agent | null = agentData ?? null;
+  const loading = agentLoading;
+  const agentWaiting = Array.isArray(waitingData) ? waitingData.filter((r: any) => r.agent_id === id) : [];
+  const waitingRuns = agentWaiting.filter((r: Run) => r.status === "waiting");
+  const pendingRuns = agentWaiting.filter((r: Run) => r.status === "pending");
+  const recentRuns = (Array.isArray(recentData) ? recentData.filter((r: any) => r.agent_id === id) : []).slice(0, 25);
 
   // Dialogs
   const [showSettings, setShowSettings] = useState(false);
@@ -44,35 +87,6 @@ export default function AgentDetailPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
 
-  const loadAll = useCallback(async () => {
-    const [agentRes, jobsRes, waitingRes, recentRes] = await Promise.all([
-      fetch(`/api/agents/${id}`),
-      fetch(`/api/agents/${id}/jobs`),
-      fetch(`/api/runs?filter=waiting`),
-      fetch(`/api/runs?filter=recent`),
-    ]);
-    if (agentRes.ok) {
-      const a = await agentRes.json();
-      setAgent(a);
-      setEditName(a.name);
-      setEditDesc(a.description || "");
-    }
-    if (jobsRes.ok) setJobs(await jobsRes.json());
-    if (waitingRes.ok) {
-      const all = await waitingRes.json();
-      const agentRuns = Array.isArray(all) ? all.filter((r: any) => r.agent_id === id) : [];
-      setWaitingRuns(agentRuns.filter((r: Run) => r.status === "waiting"));
-      setPendingRuns(agentRuns.filter((r: Run) => r.status === "pending"));
-    }
-    if (recentRes.ok) {
-      const all = await recentRes.json();
-      setRecentRuns(Array.isArray(all) ? all.filter((r: any) => r.agent_id === id).slice(0, 25) : []);
-    }
-    setLoading(false);
-  }, [id]);
-
-  useEffect(() => { loadAll(); }, [loadAll]);
-
   async function handleUpdateAgent() {
     await fetch(`/api/agents/${id}`, {
       method: "PUT",
@@ -80,7 +94,7 @@ export default function AgentDetailPage() {
       body: JSON.stringify({ name: editName, description: editDesc }),
     });
     setShowSettings(false);
-    loadAll();
+    queryClient.invalidateQueries({ queryKey: ["agents"] });
   }
 
   async function handleDeleteAgent() {
@@ -152,7 +166,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowRotateKey(true)} title="API Key">
             <Key className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowSettings(true)} title="Settings">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setShowSettings(true); }} title="Settings">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>

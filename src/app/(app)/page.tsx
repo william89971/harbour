@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -41,12 +42,28 @@ function RunRow({ run }: { run: Run }) {
 
 export default function RunsPage() {
   const router = useRouter();
-  const [scheduled, setScheduled] = useState<Run[]>([]);
-  const [running, setRunning] = useState<Run[]>([]);
-  const [waiting, setWaiting] = useState<Run[]>([]);
-  const [pending, setPending] = useState<Run[]>([]);
-  const [recent, setRecent] = useState<Run[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  const { data: runsData, isLoading: loading } = useQuery<{
+    scheduled?: Run[];
+    running?: Run[];
+    waiting?: Run[];
+    recent?: Run[];
+  }>({
+    queryKey: ["runs"],
+    queryFn: async () => {
+      const res = await fetch("/api/runs");
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const scheduled = runsData?.scheduled || [];
+  const running = runsData?.running || [];
+  const allWaiting = runsData?.waiting || [];
+  const waiting = allWaiting.filter((r: Run) => r.status === "waiting");
+  const pending = allWaiting.filter((r: Run) => r.status === "pending");
+  const recent = runsData?.recent || [];
 
   // New run dialog
   const [showCreate, setShowCreate] = useState(false);
@@ -58,22 +75,6 @@ export default function RunsPage() {
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [whenType, setWhenType] = useState<"now" | "later">("now");
   const [scheduledTime, setScheduledTime] = useState("");
-
-  function loadRuns() {
-    fetch("/api/runs")
-      .then(r => r.json())
-      .then(data => {
-        setScheduled(data.scheduled || []);
-        setRunning(data.running || []);
-        const all = data.waiting || [];
-        setWaiting(all.filter((r: Run) => r.status === "waiting"));
-        setPending(all.filter((r: Run) => r.status === "pending"));
-        setRecent(data.recent || []);
-      })
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(() => { loadRuns(); }, []);
 
   async function openCreateDialog() {
     const [agentsRes, docsRes] = await Promise.all([
@@ -111,7 +112,7 @@ export default function RunsPage() {
     setSelectedDocIds([]);
     setWhenType("now");
     setScheduledTime("");
-    loadRuns();
+    queryClient.invalidateQueries({ queryKey: ["runs"] });
   }
 
   function toggleDoc(docId: string) {
