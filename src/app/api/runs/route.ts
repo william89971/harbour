@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
     name: body.name,
     instructions: body.instructions,
     docIds: body.docIds,
+    envVarIds: body.envVarIds,
     runAt: body.runAt,
   });
 

@@ -10,12 +10,116 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { SchedulePicker, parseSchedule, serializeSchedule } from "@/components/app/schedule-picker";
 import { CLI_CONFIG } from "@/lib/cli-config";
-import { Pin } from "lucide-react";
+import { Pin, FileText, KeyRound, Plus, X } from "lucide-react";
 
 type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null };
 type Doc = { id: string; title: string; pinned: number };
+type EnvVar = { id: string; name: string; pinned: number };
 
 const SELECT_CLASS = "flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
+
+// Sub-dialog for picking docs or env vars
+function PickerDialog({
+  open,
+  onOpenChange,
+  title,
+  items,
+  selectedIds,
+  onToggle,
+  icon: Icon,
+  nameClass,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  items: { id: string; name: string; pinned: number }[];
+  selectedIds: Set<string>;
+  onToggle: (id: string) => void;
+  icon: React.ComponentType<{ className?: string }>;
+  nameClass?: string;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
+        {items.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">None available yet.</p>
+        ) : (
+          <div className="space-y-0.5 max-h-80 overflow-y-auto">
+            {items.map(item => (
+              <label
+                key={item.id}
+                className="flex items-center gap-3 rounded-lg p-2.5 cursor-pointer hover:bg-accent/50 transition-colors"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(item.id)}
+                  onChange={() => onToggle(item.id)}
+                  className="rounded"
+                />
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10">
+                  <Icon className="h-3.5 w-3.5 text-primary" />
+                </div>
+                <span className={`text-sm font-medium flex-1 min-w-0 truncate ${nameClass || ""}`}>{item.name}</span>
+                {item.pinned === 1 && <Pin className="h-3 w-3 text-muted-foreground/50 shrink-0" />}
+              </label>
+            ))}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Compact display of selected items with remove buttons
+function SelectedItems({
+  items,
+  selectedIds,
+  onRemove,
+  onAdd,
+  icon: Icon,
+  label,
+  nameClass,
+}: {
+  items: { id: string; name: string; pinned: number }[];
+  selectedIds: string[];
+  onRemove: (id: string) => void;
+  onAdd: () => void;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  nameClass?: string;
+}) {
+  const selected = items.filter(i => selectedIds.includes(i.id));
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label>{label}</Label>
+        <button type="button" onClick={onAdd} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+          <Plus className="h-3 w-3" /> Add
+        </button>
+      </div>
+      {selected.length === 0 ? (
+        <p className="text-xs text-muted-foreground">None selected. Pinned items will still be included automatically.</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {selected.map(item => (
+            <span key={item.id} className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs font-medium">
+              <Icon className="h-3 w-3 text-muted-foreground" />
+              <span className={nameClass}>{item.name}</span>
+              <button type="button" onClick={() => onRemove(item.id)} className="text-muted-foreground hover:text-foreground transition-colors ml-0.5">
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function CreateDialog({
   open,
@@ -31,6 +135,7 @@ export function CreateDialog({
   const [tab, setTab] = useState<"run" | "job">(defaultTab);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [docs, setDocs] = useState<Doc[]>([]);
+  const [envVars, setEnvVars] = useState<EnvVar[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   // Shared fields
@@ -39,9 +144,14 @@ export function CreateDialog({
   const [instructions, setInstructions] = useState("");
   const [model, setModel] = useState("");
   const [thinking, setThinking] = useState("");
+  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+  const [selectedEnvVarIds, setSelectedEnvVarIds] = useState<string[]>([]);
+
+  // Picker dialogs
+  const [showDocPicker, setShowDocPicker] = useState(false);
+  const [showEnvVarPicker, setShowEnvVarPicker] = useState(false);
 
   // Run-only fields
-  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
   const [whenType, setWhenType] = useState<"now" | "later">("now");
   const [scheduledTime, setScheduledTime] = useState("");
 
@@ -50,25 +160,34 @@ export function CreateDialog({
   const [schedule, setSchedule] = useState(parseSchedule(null));
   const [checkCommand, setCheckCommand] = useState("");
 
-  // Reset tab to caller's default when dialog opens
   useEffect(() => {
     if (open) setTab(defaultTab);
   }, [open, defaultTab]);
 
-  // Load agents + docs when dialog opens
+  // Load data + auto-select pinned items when dialog opens
   useEffect(() => {
     if (!open || loaded) return;
     (async () => {
-      const [agentsRes, docsRes] = await Promise.all([
+      const [agentsRes, docsRes, envVarsRes] = await Promise.all([
         fetch("/api/agents"),
         fetch("/api/docs"),
+        fetch("/api/env-vars"),
       ]);
       if (agentsRes.ok) {
         const data = await agentsRes.json();
         setAgents(data);
         if (data.length > 0 && !agentId) setAgentId(data[0].id);
       }
-      if (docsRes.ok) setDocs(await docsRes.json());
+      if (docsRes.ok) {
+        const docsData = await docsRes.json();
+        setDocs(docsData);
+        setSelectedDocIds(docsData.filter((d: Doc) => d.pinned).map((d: Doc) => d.id));
+      }
+      if (envVarsRes.ok) {
+        const evData = await envVarsRes.json();
+        setEnvVars(evData);
+        setSelectedEnvVarIds(evData.filter((ev: EnvVar) => ev.pinned).map((ev: EnvVar) => ev.id));
+      }
       setLoaded(true);
     })();
   }, [open, loaded, agentId]);
@@ -79,6 +198,7 @@ export function CreateDialog({
     setModel("");
     setThinking("");
     setSelectedDocIds([]);
+    setSelectedEnvVarIds([]);
     setWhenType("now");
     setScheduledTime("");
     setDescription("");
@@ -92,6 +212,10 @@ export function CreateDialog({
     onOpenChange(value);
   }
 
+  function toggleItem(id: string, list: string[], setList: (v: string[]) => void) {
+    setList(list.includes(id) ? list.filter(i => i !== id) : [...list, id]);
+  }
+
   async function handleCreateRun(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !agentId) return;
@@ -102,6 +226,7 @@ export function CreateDialog({
       instructions: instructions || undefined,
     };
     if (selectedDocIds.length > 0) body.docIds = selectedDocIds;
+    if (selectedEnvVarIds.length > 0) body.envVarIds = selectedEnvVarIds;
     if (whenType === "later" && scheduledTime) {
       body.runAt = Math.floor(new Date(scheduledTime).getTime() / 1000);
     }
@@ -131,6 +256,8 @@ export function CreateDialog({
         checkCommand: checkCommand || undefined,
         model: model || undefined,
         thinking: thinking || undefined,
+        docIds: selectedDocIds.length > 0 ? selectedDocIds : undefined,
+        envVarIds: selectedEnvVarIds.length > 0 ? selectedEnvVarIds : undefined,
       }),
     });
 
@@ -147,186 +274,173 @@ export function CreateDialog({
   const selectedAgent = agents.find(a => a.id === agentId);
   const cliConfig = selectedAgent?.type === "harbour" && selectedAgent.cli ? CLI_CONFIG[selectedAgent.cli] : null;
 
+  // Shared form fields rendered in both tabs
+  const sharedFields = (
+    <>
+      <div className="space-y-2">
+        <Label>Agent</Label>
+        <select value={agentId} onChange={e => handleAgentChange(e.target.value)} className={SELECT_CLASS}>
+          {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+      </div>
+    </>
+  );
+
+  const modelThinkingFields = cliConfig ? (
+    <div className="grid grid-cols-2 gap-3">
+      <div className="space-y-2">
+        <Label>Model</Label>
+        <select value={model} onChange={e => setModel(e.target.value)} className={SELECT_CLASS}>
+          <option value="">Default{selectedAgent?.model ? ` (${selectedAgent.model})` : ""}</option>
+          {cliConfig.models.map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </div>
+      <div className="space-y-2">
+        <Label>{cliConfig.thinkingLabel}</Label>
+        <select value={thinking} onChange={e => setThinking(e.target.value)} className={SELECT_CLASS}>
+          <option value="">Default{selectedAgent?.thinking ? ` (${selectedAgent.thinking})` : ""}</option>
+          {cliConfig.thinkingOptions.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </div>
+    </div>
+  ) : null;
+
+  const docsEnvVarsFields = (
+    <>
+      <SelectedItems
+        items={docs.map(d => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+        selectedIds={selectedDocIds}
+        onRemove={id => setSelectedDocIds(prev => prev.filter(i => i !== id))}
+        onAdd={() => setShowDocPicker(true)}
+        icon={FileText}
+        label="Docs"
+      />
+      <SelectedItems
+        items={envVars}
+        selectedIds={selectedEnvVarIds}
+        onRemove={id => setSelectedEnvVarIds(prev => prev.filter(i => i !== id))}
+        onAdd={() => setShowEnvVarPicker(true)}
+        icon={KeyRound}
+        label="Env Vars"
+        nameClass="font-mono"
+      />
+    </>
+  );
+
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{tab === "run" ? "New Run" : "New Job"}</DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{tab === "run" ? "New Run" : "New Job"}</DialogTitle>
+          </DialogHeader>
 
-        <Tabs value={tab} onValueChange={v => setTab(v as "run" | "job")}>
-          <TabsList className="w-full">
-            <TabsTrigger value="run" className="flex-1">Run</TabsTrigger>
-            <TabsTrigger value="job" className="flex-1">Job</TabsTrigger>
-          </TabsList>
+          <Tabs value={tab} onValueChange={v => setTab(v as "run" | "job")}>
+            <TabsList className="w-full">
+              <TabsTrigger value="run" className="flex-1">Run</TabsTrigger>
+              <TabsTrigger value="job" className="flex-1">Job</TabsTrigger>
+            </TabsList>
 
-          {/* --- Run tab --- */}
-          <TabsContent value="run">
-            <form onSubmit={handleCreateRun} className="space-y-4 pt-2">
-              {/* Shared: Agent */}
-              <div className="space-y-2">
-                <Label>Agent</Label>
-                <select value={agentId} onChange={e => handleAgentChange(e.target.value)} className={SELECT_CLASS}>
-                  {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
-              </div>
+            {/* --- Run tab --- */}
+            <TabsContent value="run">
+              <form onSubmit={handleCreateRun} className="space-y-4 pt-2">
+                {sharedFields}
 
-              {/* Shared: Name */}
-              <div className="space-y-2">
-                <Label>Title</Label>
-                <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Research competitors" required />
-              </div>
-
-              {/* Shared: Instructions */}
-              <div className="space-y-2">
-                <Label>Instructions</Label>
-                <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="What should the agent do?" rows={3} className="max-h-[25vh]" />
-              </div>
-
-              {/* Run: Docs */}
-              {docs.length > 0 && (
                 <div className="space-y-2">
-                  <Label>Docs</Label>
-                  <div className="space-y-0.5 max-h-32 overflow-y-auto rounded-lg border p-2">
-                    {docs.map(doc => (
-                      <label key={doc.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-accent/50 rounded px-1.5 py-1">
-                        <input
-                          type="checkbox"
-                          checked={selectedDocIds.includes(doc.id)}
-                          onChange={() => setSelectedDocIds(prev =>
-                            prev.includes(doc.id) ? prev.filter(id => id !== doc.id) : [...prev, doc.id]
-                          )}
-                          className="rounded"
-                        />
-                        <span className="flex-1 truncate">{doc.title}</span>
-                        {doc.pinned === 1 && <Pin className="h-3 w-3 text-muted-foreground/50 shrink-0" />}
-                      </label>
-                    ))}
-                  </div>
+                  <Label>Title</Label>
+                  <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Research competitors" required />
                 </div>
-              )}
 
-              {/* Shared: Model / Thinking (harbour agents) */}
-              {cliConfig && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Model</Label>
-                    <select value={model} onChange={e => setModel(e.target.value)} className={SELECT_CLASS}>
-                      <option value="">Default{selectedAgent?.model ? ` (${selectedAgent.model})` : ""}</option>
-                      {cliConfig.models.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{cliConfig.thinkingLabel}</Label>
-                    <select value={thinking} onChange={e => setThinking(e.target.value)} className={SELECT_CLASS}>
-                      <option value="">Default{selectedAgent?.thinking ? ` (${selectedAgent.thinking})` : ""}</option>
-                      {cliConfig.thinkingOptions.map(o => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                  </div>
+                <div className="space-y-2">
+                  <Label>Instructions</Label>
+                  <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="What should the agent do?" rows={3} className="max-h-[25vh]" />
                 </div>
-              )}
 
-              {/* Run: When */}
-              <div className="space-y-2">
-                <Label>When</Label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setWhenType("now")}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${whenType === "now" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
-                  >
-                    Now
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setWhenType("later")}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${whenType === "later" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
-                  >
-                    Schedule
-                  </button>
-                </div>
-                {whenType === "later" && (
-                  <Input type="datetime-local" value={scheduledTime} onChange={e => setScheduledTime(e.target.value)} required />
-                )}
-              </div>
+                {modelThinkingFields}
+                {docsEnvVarsFields}
 
-              <DialogFooter>
-                <Button type="button" variant="ghost" onClick={() => handleClose(false)}>Cancel</Button>
-                <Button type="submit">Create Run</Button>
-              </DialogFooter>
-            </form>
-          </TabsContent>
-
-          {/* --- Job tab --- */}
-          <TabsContent value="job">
-            <form onSubmit={handleCreateJob} className="space-y-4 pt-2">
-              {/* Shared: Agent */}
-              <div className="space-y-2">
-                <Label>Agent</Label>
-                <select value={agentId} onChange={e => handleAgentChange(e.target.value)} className={SELECT_CLASS}>
-                  {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
-              </div>
-
-              {/* Shared: Name */}
-              <div className="space-y-2">
-                <Label>Name</Label>
-                <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Morning Tweet" required />
-              </div>
-
-              {/* Job: Description */}
-              <div className="space-y-2">
-                <Label>Description</Label>
-                <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief description" />
-              </div>
-
-              {/* Shared: Instructions */}
-              <div className="space-y-2">
-                <Label>Instructions</Label>
-                <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="What should the agent do?" rows={3} className="max-h-[25vh]" />
-              </div>
-
-              {/* Job: Schedule */}
-              <div className="space-y-2">
-                <Label>Schedule</Label>
-                <SchedulePicker schedule={schedule} onChange={setSchedule} />
-              </div>
-
-              {/* Shared: Model / Thinking (harbour agents) */}
-              {cliConfig && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Model</Label>
-                    <select value={model} onChange={e => setModel(e.target.value)} className={SELECT_CLASS}>
-                      <option value="">Default{selectedAgent?.model ? ` (${selectedAgent.model})` : ""}</option>
-                      {cliConfig.models.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
+                <div className="space-y-2">
+                  <Label>When</Label>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setWhenType("now")} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${whenType === "now" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>Now</button>
+                    <button type="button" onClick={() => setWhenType("later")} className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${whenType === "later" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>Schedule</button>
                   </div>
-                  <div className="space-y-2">
-                    <Label>{cliConfig.thinkingLabel}</Label>
-                    <select value={thinking} onChange={e => setThinking(e.target.value)} className={SELECT_CLASS}>
-                      <option value="">Default{selectedAgent?.thinking ? ` (${selectedAgent.thinking})` : ""}</option>
-                      {cliConfig.thinkingOptions.map(o => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                  </div>
+                  {whenType === "later" && (
+                    <Input type="datetime-local" value={scheduledTime} onChange={e => setScheduledTime(e.target.value)} required />
+                  )}
                 </div>
-              )}
 
-              {/* Job: Pre-run check */}
-              <div className="space-y-2">
-                <Label>Pre-run Check (optional)</Label>
-                <Input value={checkCommand} onChange={e => setCheckCommand(e.target.value)} placeholder="e.g. python3 checks/new_videos.py" className="font-mono text-xs" />
-                <p className="text-xs text-muted-foreground">Shell command run before the LLM. Exit 0 = proceed, non-zero = skip.</p>
-              </div>
+                <DialogFooter>
+                  <Button type="button" variant="ghost" onClick={() => handleClose(false)}>Cancel</Button>
+                  <Button type="submit">Create Run</Button>
+                </DialogFooter>
+              </form>
+            </TabsContent>
 
-              <DialogFooter>
-                <Button type="button" variant="ghost" onClick={() => handleClose(false)}>Cancel</Button>
-                <Button type="submit">Create Job</Button>
-              </DialogFooter>
-            </form>
-          </TabsContent>
-        </Tabs>
-      </DialogContent>
-    </Dialog>
+            {/* --- Job tab --- */}
+            <TabsContent value="job">
+              <form onSubmit={handleCreateJob} className="space-y-4 pt-2">
+                {sharedFields}
+
+                <div className="space-y-2">
+                  <Label>Name</Label>
+                  <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Morning Tweet" required />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Description</Label>
+                  <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief description" />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Instructions</Label>
+                  <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="What should the agent do?" rows={3} className="max-h-[25vh]" />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Schedule</Label>
+                  <SchedulePicker schedule={schedule} onChange={setSchedule} />
+                </div>
+
+                {modelThinkingFields}
+                {docsEnvVarsFields}
+
+                <div className="space-y-2">
+                  <Label>Pre-run Check (optional)</Label>
+                  <Input value={checkCommand} onChange={e => setCheckCommand(e.target.value)} placeholder="e.g. python3 checks/new_videos.py" className="font-mono text-xs" />
+                  <p className="text-xs text-muted-foreground">Shell command run before the LLM. Exit 0 = proceed, non-zero = skip.</p>
+                </div>
+
+                <DialogFooter>
+                  <Button type="button" variant="ghost" onClick={() => handleClose(false)}>Cancel</Button>
+                  <Button type="submit">Create Job</Button>
+                </DialogFooter>
+              </form>
+            </TabsContent>
+          </Tabs>
+        </DialogContent>
+      </Dialog>
+
+      {/* Sub-dialogs for picking docs and env vars */}
+      <PickerDialog
+        open={showDocPicker}
+        onOpenChange={setShowDocPicker}
+        title="Select Docs"
+        items={docs.map(d => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+        selectedIds={new Set(selectedDocIds)}
+        onToggle={id => toggleItem(id, selectedDocIds, setSelectedDocIds)}
+        icon={FileText}
+      />
+      <PickerDialog
+        open={showEnvVarPicker}
+        onOpenChange={setShowEnvVarPicker}
+        title="Select Env Vars"
+        items={envVars}
+        selectedIds={new Set(selectedEnvVarIds)}
+        onToggle={id => toggleItem(id, selectedEnvVarIds, setSelectedEnvVarIds)}
+        icon={KeyRound}
+        nameClass="font-mono"
+      />
+    </>
   );
 }

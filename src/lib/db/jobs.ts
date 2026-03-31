@@ -12,6 +12,8 @@ export function createJob(agentId: string, data: {
   checkCommand?: string;
   model?: string;
   thinking?: string;
+  docIds?: string[];
+  envVarIds?: string[];
   active?: boolean;
 }) {
   const db = getDb();
@@ -27,16 +29,16 @@ export function createJob(agentId: string, data: {
     data.active !== false ? 1 : 0, nextRunAt
   );
 
-  // Auto-attach pinned docs and env vars
-  const pinnedDocIds = listPinnedDocIds();
-  if (pinnedDocIds.length > 0) {
+  // Merge explicitly selected docs/env vars with pinned ones
+  const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds()]);
+  if (allDocIds.size > 0) {
     const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
-    for (const docId of pinnedDocIds) linkStmt.run(id, docId);
+    for (const docId of allDocIds) linkStmt.run(id, docId);
   }
-  const pinnedEnvIds = listPinnedEnvVarIds();
-  if (pinnedEnvIds.length > 0) {
+  const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds()]);
+  if (allEnvVarIds.size > 0) {
     const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
-    for (const envId of pinnedEnvIds) linkStmt.run(id, envId);
+    for (const envId of allEnvVarIds) linkStmt.run(id, envId);
   }
 
   return getJobById(id);
@@ -143,6 +145,7 @@ export function createOneOffRun(agentId: string, data: {
   name: string;
   instructions?: string;
   docIds?: string[];
+  envVarIds?: string[];
   runAt?: number;
 }) {
   const db = getDb();
@@ -164,11 +167,11 @@ export function createOneOffRun(agentId: string, data: {
     for (const docId of allDocIds) linkStmt.run(jobId, docId);
   }
 
-  // Auto-attach pinned env vars
-  const pinnedEnvIds = listPinnedEnvVarIds();
-  if (pinnedEnvIds.length > 0) {
+  // Merge explicitly selected env vars with pinned env vars
+  const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds()]);
+  if (allEnvVarIds.size > 0) {
     const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
-    for (const envId of pinnedEnvIds) linkStmt.run(jobId, envId);
+    for (const envId of allEnvVarIds) linkStmt.run(jobId, envId);
   }
 
   // Create the run immediately with 'scheduled' status
