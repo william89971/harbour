@@ -38,11 +38,12 @@ export default function SettingsPage() {
   }, [timezones, tzSearch]);
 
   async function updateSetting(key: string, value: string) {
-    await fetch("/api/settings", {
+    const res = await fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ [key]: value }),
     });
+    if (!res.ok) { alert("Failed to update setting"); return; }
     queryClient.invalidateQueries({ queryKey: ["settings"] });
   }
 

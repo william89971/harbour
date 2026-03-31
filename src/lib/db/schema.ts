@@ -194,6 +194,8 @@ export function initializeSchema(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id);
     CREATE INDEX IF NOT EXISTS idx_database_migrations_db ON database_migrations(database_id);
+    CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
+    CREATE INDEX IF NOT EXISTS idx_run_activity_run_time ON run_activity(run_id, created_at);
   `);
 
   // Migrations: drop agent_id from docs (now top-level)

@@ -19,7 +19,7 @@ import {
   Settings, Trash2, X, Plus, Pin,
   FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock, Cpu, KeyRound,
 } from "lucide-react";
-import { CLI_CONFIG } from "@/lib/cli-config";
+import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { timeAgo, formatTimestamp } from "@/lib/time";
 import { StatusDot } from "@/components/app/run-status";
 
@@ -144,7 +144,7 @@ export default function JobDetailPage() {
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
-    await fetch(`/api/jobs/${id}`, {
+    const res = await fetch(`/api/jobs/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -158,51 +158,58 @@ export default function JobDetailPage() {
         thinking: editThinking || "",
       }),
     });
+    if (!res.ok) { alert("Failed to update job"); return; }
     setShowEdit(false);
     queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleToggleActive() {
     if (!job) return;
-    await fetch(`/api/jobs/${id}`, {
+    const res = await fetch(`/api/jobs/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ active: !job.active }),
     });
+    if (!res.ok) { alert("Failed to update job"); return; }
     queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleLinkDoc(docId: string) {
-    await fetch(`/api/jobs/${id}/docs`, {
+    const res = await fetch(`/api/jobs/${id}/docs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ docId }),
     });
+    if (!res.ok) { alert("Failed to link doc"); return; }
     queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleUnlinkDoc(docId: string) {
-    await fetch(`/api/jobs/${id}/docs/${docId}`, { method: "DELETE" });
+    const res = await fetch(`/api/jobs/${id}/docs/${docId}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to unlink doc"); return; }
     queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleLinkEnvVar(envVarId: string) {
-    await fetch(`/api/jobs/${id}/env-vars`, {
+    const res = await fetch(`/api/jobs/${id}/env-vars`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ envVarId }),
     });
+    if (!res.ok) { alert("Failed to link env var"); return; }
     queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleUnlinkEnvVar(envVarId: string) {
-    await fetch(`/api/jobs/${id}/env-vars/${envVarId}`, { method: "DELETE" });
+    const res = await fetch(`/api/jobs/${id}/env-vars/${envVarId}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to unlink env var"); return; }
     queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleDelete() {
     if (!confirm(`Delete "${job?.name}"? All run history will be lost.`)) return;
-    await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to delete job"); return; }
     router.push(`/agents/${job?.agent_id}`);
   }
 
@@ -455,41 +462,17 @@ export default function JobDetailPage() {
               <Label>Timeout (minutes)</Label>
               <Input type="number" min={1} value={editTimeout} onChange={e => setEditTimeout(parseInt(e.target.value) || 30)} />
             </div>
-            {(() => {
-              if (!agent || agent.type !== "harbour" || !agent.cli) return null;
-              const config = CLI_CONFIG[agent.cli];
-              if (!config) return null;
-              return (
-                <>
-                  <div className="space-y-2">
-                    <Label>Model</Label>
-                    <select
-                      value={editModel}
-                      onChange={e => setEditModel(e.target.value)}
-                      className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                    >
-                      <option value="">Agent default{agent.model ? ` (${agent.model})` : ""}</option>
-                      {config.models.map((m: string) => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{config.thinkingLabel}</Label>
-                    <select
-                      value={editThinking}
-                      onChange={e => setEditThinking(e.target.value)}
-                      className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                    >
-                      <option value="">Agent default{agent.thinking ? ` (${agent.thinking})` : ""}</option>
-                      {config.thinkingOptions.map((o: string) => (
-                        <option key={o} value={o}>{o}</option>
-                      ))}
-                    </select>
-                  </div>
-                </>
-              );
-            })()}
+            {agent?.type === "harbour" && agent.cli && (
+              <ModelThinkingSelect
+                cli={agent.cli}
+                model={editModel}
+                thinking={editThinking}
+                onModelChange={setEditModel}
+                onThinkingChange={setEditThinking}
+                defaultModelLabel={`Agent default${agent.model ? ` (${agent.model})` : ""}`}
+                defaultThinkingLabel={`Agent default${agent.thinking ? ` (${agent.thinking})` : ""}`}
+              />
+            )}
             <DialogFooter>
               <Button type="button" variant="destructive" onClick={handleDelete} className="mr-auto"><Trash2 className="h-4 w-4 mr-1" /> Delete</Button>
               <Button type="button" variant="ghost" onClick={() => setShowEdit(false)}>Cancel</Button>

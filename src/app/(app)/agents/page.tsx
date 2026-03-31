@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Bot, Plus, Briefcase, Copy, Check, Terminal, ExternalLink, Loader2, CheckCircle, XCircle } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
+import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 
 type Agent = {
   id: string;
@@ -326,35 +327,14 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                 <Textarea id="agent-desc" value={description} onChange={e => setDescription(e.target.value)} placeholder="What does this agent do?" rows={2} />
               </div>
               {agentType === "harbour" && selectedCli && CLI_CONFIG[selectedCli] && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="agent-model">Model</Label>
-                    <select
-                      id="agent-model"
-                      value={selectedModel}
-                      onChange={e => setSelectedModel(e.target.value)}
-                      className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                    >
-                      {CLI_CONFIG[selectedCli].models.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="agent-thinking">{CLI_CONFIG[selectedCli].thinkingLabel}</Label>
-                    <select
-                      id="agent-thinking"
-                      value={selectedThinking}
-                      onChange={e => setSelectedThinking(e.target.value)}
-                      className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                    >
-                      <option value="">Default</option>
-                      {CLI_CONFIG[selectedCli].thinkingOptions.map(o => (
-                        <option key={o} value={o}>{o}</option>
-                      ))}
-                    </select>
-                  </div>
-                </>
+                <ModelThinkingSelect
+                  cli={selectedCli}
+                  model={selectedModel}
+                  thinking={selectedThinking}
+                  onModelChange={setSelectedModel}
+                  onThinkingChange={setSelectedThinking}
+                  defaultThinkingLabel="Default"
+                />
               )}
               <DialogFooter>
                 <Button type="button" variant="ghost" onClick={() => {

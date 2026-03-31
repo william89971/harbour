@@ -56,7 +56,8 @@ export default function EnvVarDetailPage() {
   }
 
   async function handleTogglePin() {
-    await fetch(`/api/env-vars/${id}/pin`, { method: "POST" });
+    const res = await fetch(`/api/env-vars/${id}/pin`, { method: "POST" });
+    if (!res.ok) { alert("Failed to toggle pin"); return; }
     queryClient.invalidateQueries({ queryKey: ["env-vars", id] });
   }
 
@@ -74,11 +75,12 @@ export default function EnvVarDetailPage() {
     if (editName !== envVar?.name) body.name = editName;
     if (editValue) body.value = editValue;
     if (Object.keys(body).length > 0) {
-      await fetch(`/api/env-vars/${id}`, {
+      const res = await fetch(`/api/env-vars/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (!res.ok) { setSaving(false); alert("Failed to save env var"); return; }
       // Clear cached decrypted value if value was changed
       if (editValue) {
         setDecryptedValue(null);
@@ -91,7 +93,8 @@ export default function EnvVarDetailPage() {
   }
 
   async function handleDelete() {
-    await fetch(`/api/env-vars/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/env-vars/${id}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to delete env var"); return; }
     router.push("/env-vars");
   }
 

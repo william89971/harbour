@@ -56,12 +56,13 @@ export default function DocDetailPage() {
 
   async function handleSave() {
     setSaving(true);
-    await fetch(`/api/docs/${id}`, {
+    const res = await fetch(`/api/docs/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: editTitle, content: editContent }),
     });
     setSaving(false);
+    if (!res.ok) { alert("Failed to save doc"); return; }
     setEditing(false);
     setEditInitialized(false);
     queryClient.invalidateQueries({ queryKey: ["docs", id] });
@@ -69,12 +70,14 @@ export default function DocDetailPage() {
 
   async function handleDelete() {
     if (!confirm(`Delete "${doc?.title}"?`)) return;
-    await fetch(`/api/docs/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/docs/${id}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to delete doc"); return; }
     router.push("/docs");
   }
 
   async function handleTogglePin() {
-    await fetch(`/api/docs/${id}/pin`, { method: "POST" });
+    const res = await fetch(`/api/docs/${id}/pin`, { method: "POST" });
+    if (!res.ok) { alert("Failed to toggle pin"); return; }
     queryClient.invalidateQueries({ queryKey: ["docs", id] });
   }
 

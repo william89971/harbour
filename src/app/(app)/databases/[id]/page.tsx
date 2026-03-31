@@ -67,7 +67,8 @@ export default function DatabaseDetailPage() {
 
   async function handleDelete() {
     if (!confirm(`Delete "${db?.name}"? The table and all its data will be permanently removed.`)) return;
-    await fetch(`/api/databases/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/databases/${id}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to delete database"); return; }
     router.push("/databases");
   }
 

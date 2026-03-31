@@ -9,14 +9,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { SchedulePicker, parseSchedule, serializeSchedule } from "@/components/app/schedule-picker";
-import { CLI_CONFIG } from "@/lib/cli-config";
+import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { Pin, FileText, KeyRound, Plus, X } from "lucide-react";
 
 type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null };
 type Doc = { id: string; title: string; pinned: number };
 type EnvVar = { id: string; name: string; pinned: number };
-
-const SELECT_CLASS = "flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
 // Sub-dialog for picking docs or env vars
 function PickerDialog({
@@ -231,11 +229,12 @@ export function CreateDialog({
       body.runAt = Math.floor(new Date(scheduledTime).getTime() / 1000);
     }
 
-    await fetch("/api/runs", {
+    const res = await fetch("/api/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    if (!res.ok) { alert("Failed to create run"); return; }
 
     handleClose(false);
     queryClient.invalidateQueries({ queryKey: ["runs"] });
@@ -245,7 +244,7 @@ export function CreateDialog({
     e.preventDefault();
     if (!name.trim() || !agentId) return;
 
-    await fetch(`/api/agents/${agentId}/jobs`, {
+    const res = await fetch(`/api/agents/${agentId}/jobs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -260,6 +259,7 @@ export function CreateDialog({
         envVarIds: selectedEnvVarIds.length > 0 ? selectedEnvVarIds : undefined,
       }),
     });
+    if (!res.ok) { alert("Failed to create job"); return; }
 
     handleClose(false);
     queryClient.invalidateQueries({ queryKey: ["jobs"] });
@@ -272,7 +272,6 @@ export function CreateDialog({
   }
 
   const selectedAgent = agents.find(a => a.id === agentId);
-  const cliConfig = selectedAgent?.type === "harbour" && selectedAgent.cli ? CLI_CONFIG[selectedAgent.cli] : null;
 
   // Shared form fields rendered in both tabs
   const sharedFields = (
@@ -286,22 +285,17 @@ export function CreateDialog({
     </>
   );
 
-  const modelThinkingFields = cliConfig ? (
+  const modelThinkingFields = selectedAgent?.type === "harbour" && selectedAgent.cli ? (
     <div className="grid grid-cols-2 gap-3">
-      <div className="space-y-2">
-        <Label>Model</Label>
-        <select value={model} onChange={e => setModel(e.target.value)} className={SELECT_CLASS}>
-          <option value="">Default{selectedAgent?.model ? ` (${selectedAgent.model})` : ""}</option>
-          {cliConfig.models.map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
-      </div>
-      <div className="space-y-2">
-        <Label>{cliConfig.thinkingLabel}</Label>
-        <select value={thinking} onChange={e => setThinking(e.target.value)} className={SELECT_CLASS}>
-          <option value="">Default{selectedAgent?.thinking ? ` (${selectedAgent.thinking})` : ""}</option>
-          {cliConfig.thinkingOptions.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-      </div>
+      <ModelThinkingSelect
+        cli={selectedAgent.cli}
+        model={model}
+        thinking={thinking}
+        onModelChange={setModel}
+        onThinkingChange={setThinking}
+        defaultModelLabel={`Default${selectedAgent.model ? ` (${selectedAgent.model})` : ""}`}
+        defaultThinkingLabel={`Default${selectedAgent.thinking ? ` (${selectedAgent.thinking})` : ""}`}
+      />
     </div>
   ) : null;
 

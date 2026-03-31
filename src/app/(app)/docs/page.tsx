@@ -47,7 +47,8 @@ export default function DocsPage() {
 
   async function handleTogglePin(e: React.MouseEvent, docId: string) {
     e.preventDefault();
-    await fetch(`/api/docs/${docId}/pin`, { method: "POST" });
+    const res = await fetch(`/api/docs/${docId}/pin`, { method: "POST" });
+    if (!res.ok) return;
     queryClient.invalidateQueries({ queryKey: ["docs"] });
   }
 

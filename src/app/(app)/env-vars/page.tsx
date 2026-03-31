@@ -47,7 +47,8 @@ export default function EnvVarsPage() {
 
   async function handleTogglePin(e: React.MouseEvent, id: string) {
     e.preventDefault();
-    await fetch(`/api/env-vars/${id}/pin`, { method: "POST" });
+    const res = await fetch(`/api/env-vars/${id}/pin`, { method: "POST" });
+    if (!res.ok) return;
     queryClient.invalidateQueries({ queryKey: ["env-vars"] });
   }
 

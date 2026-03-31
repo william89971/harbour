@@ -22,6 +22,7 @@ import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
 
 import { CLI_CONFIG } from "@/lib/cli-config";
+import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 
 type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; last_polled_at: number | null; created_at: number };
 type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; check_command: string | null };
@@ -97,18 +98,20 @@ export default function AgentDetailPage() {
       body.model = editModel;
       body.thinking = editThinking;
     }
-    await fetch(`/api/agents/${id}`, {
+    const res = await fetch(`/api/agents/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    if (!res.ok) { alert("Failed to update agent"); return; }
     setShowSettings(false);
     queryClient.invalidateQueries({ queryKey: ["agents"] });
   }
 
   async function handleDeleteAgent() {
     if (!confirm(`Delete "${agent?.name}"? All jobs and runs will be permanently removed.`)) return;
-    await fetch(`/api/agents/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/agents/${id}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to delete agent"); return; }
     router.push("/agents");
   }
 
@@ -332,33 +335,14 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
               <Textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} rows={2} />
             </div>
             {agent.type === "harbour" && agent.cli && CLI_CONFIG[agent.cli] && (
-              <>
-                <div className="space-y-1">
-                  <Label>Model</Label>
-                  <select
-                    value={editModel}
-                    onChange={e => setEditModel(e.target.value)}
-                    className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                  >
-                    {CLI_CONFIG[agent.cli].models.map(m => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <Label>{CLI_CONFIG[agent.cli].thinkingLabel}</Label>
-                  <select
-                    value={editThinking}
-                    onChange={e => setEditThinking(e.target.value)}
-                    className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                  >
-                    <option value="">Default</option>
-                    {CLI_CONFIG[agent.cli].thinkingOptions.map(o => (
-                      <option key={o} value={o}>{o}</option>
-                    ))}
-                  </select>
-                </div>
-              </>
+              <ModelThinkingSelect
+                cli={agent.cli}
+                model={editModel}
+                thinking={editThinking}
+                onModelChange={setEditModel}
+                onThinkingChange={setEditThinking}
+                defaultThinkingLabel="Default"
+              />
             )}
           </div>
           <DialogFooter>
