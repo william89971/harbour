@@ -8,20 +8,29 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 
 ## Key paths
 
-- `src/app/(app)/` — dashboard pages (runs, jobs, agents, docs, databases)
+- `src/app/(app)/` — dashboard pages (runs, jobs, agents, docs, databases, env-vars, settings)
 - `src/app/api/` — API routes (agent-facing + dashboard)
 - `src/lib/db/` — database schema, queries, migrations
+- `src/lib/encryption.ts` — AES-256-GCM encryption for env vars
+- `src/lib/schedule.ts` — schedule parsing and timezone-aware next-run-time calculation
+- `src/lib/cli-config.ts` — shared CLI tool config (models, thinking options per tool)
 - `src/lib/runners.ts` — harbour agent runner config (read/write ~/.harbour/runners.json)
+- `src/components/app/create-dialog.tsx` — unified New Run / New Job dialog (shared component)
 - `bin/` — CLI entry point and agent runner (harbour agents, providers, launchd install)
 - `GUIDE.md` — agent-facing API contract, served at `/api/guide`
 
 ## Conventions
 
-- Jobs are static configuration (what to do, when, which docs/databases). Runs are the dynamic unit of work.
-- Docs are top-level, linked to jobs (not agent-scoped). Injected into runs automatically via `/next`.
+- Jobs are static configuration (what to do, when, which docs/databases/env vars). Runs are the dynamic unit of work.
+- Docs and env vars are top-level, linked to jobs. Injected into runs automatically via `/next`.
+- Pinned docs and env vars are auto-attached to all new jobs and one-off runs.
 - Agents poll for work via `/api/agents/:id/next`. Harbour never calls out to agents.
 - Run statuses: `scheduled` → `running` → `waiting` (needs human) → `pending` (human responded, awaiting agent pickup) → `done`/`failed`/`skipped`.
+- Failed/skipped runs can be retried (go back to `pending`).
 - The database is a single SQLite file (default `./harbour.db`).
+- Env vars are encrypted with AES-256-GCM. Key at `~/.harbour/encryption.key` (auto-generated on first run).
+- System timezone (configured in Settings) is used for all schedule calculations.
+- Model and thinking/effort can be set per agent (default) and overridden per job.
 
 ## Browser testing / screenshots
 

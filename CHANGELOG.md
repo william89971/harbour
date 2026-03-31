@@ -1,5 +1,62 @@
 # Changelog
 
+## Unreleased
+
+### Environment Variables
+- Encrypted env vars (AES-256-GCM) with key stored at `~/.harbour/encryption.key`
+- Create, edit, delete env vars from the dashboard with eye-toggle to reveal values
+- Pin env vars to auto-attach to all new jobs and one-off runs
+- Link env vars to jobs (same pattern as docs)
+- Decrypted values injected into `/next` payload as `env` object
+- Runner injects env vars into agent prompts as named credentials
+- Supports `HARBOUR_ENCRYPTION_KEY` env var override
+
+### Settings
+- New Settings page with system-wide configuration
+- Timezone: auto-detected from system on first run, searchable dropdown of all IANA timezones
+- Timezone used in all schedule calculations and time display
+- Signup toggle: enable/disable new user registration
+
+### Per-Job Model & Thinking
+- Model and thinking/effort level configurable per agent (default) and per job (override)
+- CLI-specific options: Claude (effort: low/medium/high/max), Codex (reasoning: low/medium/high), Gemini (thinking: low/medium/high)
+- Agent detail page shows type, CLI tool, model, and thinking level
+- Runner reads job-level overrides from `/next` payload, falls back to agent defaults
+- Model/thinking changes synced to `~/.harbour/runners.json`
+
+### Unified Create Dialog
+- Single "New Run / New Job" dialog with tabs, shared fields persist when switching
+- Both tabs support docs and env vars selection with picker sub-dialogs
+- Pinned docs and env vars auto-selected on dialog open
+- Model and thinking selectors shown for harbour agents on both tabs
+- Replaces separate New Run and New Job dialogs on their respective pages
+
+### Pinned Docs
+- Pin/unpin toggle on docs list and detail views
+- Pinned docs appear at top of docs list
+- Pinned docs auto-attached to all new jobs and one-off runs
+- Can still be manually removed from individual jobs
+
+### Run Improvements
+- Retry button on failed/skipped runs (sets status to pending, agent picks up on next poll)
+- View Job button always visible on run detail (including one-off runs)
+- Live streaming output from harbour agent CLI runs
+
+### Job Detail Improvements
+- Docs section with proper card layout and add dialog (replaces inline dropdown)
+- Env vars section with same pattern
+- Databases section with card layout
+
+### UI Polish
+- Consistent empty states with centered icons matching nav menu across all views
+- Agent detail shows type (Harbour/External), CLI tool badge, model, and thinking level
+- Invite and API key buttons only shown for external agents
+
+### Runner Reliability
+- Startup timeout (30s) kills hung CLI processes (e.g. unauthenticated Gemini)
+- Stdin closed immediately to prevent interactive prompt hangs
+- Stderr included in error activity logs for better diagnostics
+
 ## v1.1.0 — 2026-03-30
 
 ### Harbour Agents

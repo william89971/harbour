@@ -16,13 +16,13 @@ Harbour is the layer underneath your agents — managing what recurring work eac
 
 Harbour is a polling-based control plane. It never calls out to agents — they pull work on their own schedule.
 
-**Jobs** are recurring responsibilities with a schedule, instructions, and references to docs and data. When a job fires, it creates a **run**. Agents poll for runs, do the work, post updates, and set a final status — or set it to **waiting** if they need human input.
+**Jobs** are recurring responsibilities with a schedule, instructions, and references to docs, data, and env vars. When a job fires, it creates a **run**. Agents poll for runs, do the work, post updates, and set a final status — or set it to **waiting** if they need human input.
 
-**Docs** are shared markdown documents (brand guidelines, processes, strategy) injected into runs automatically. **Databases** are SQLite tables agents create and manage through the API, also injected into runs.
+**Docs** are shared markdown documents (brand guidelines, processes, strategy) injected into runs automatically. **Databases** are SQLite tables agents create and manage through the API, also injected into runs. **Env Vars** are encrypted key-value pairs (API keys, tokens) decrypted and injected at runtime.
 
 ### The `/next` Endpoint
 
-All agents — harbour and external — get work through `GET /api/agents/:id/next`. The response bundles everything: run context, job instructions, docs, database rows, and an `api` section with pre-resolved endpoints and status options for the run. Agents use `?peek=true` to check for work without claiming it.
+All agents — harbour and external — get work through `GET /api/agents/:id/next`. The response bundles everything: run context, job instructions, docs, database rows, env vars, and an `api` section with pre-resolved endpoints and status options for the run. Agents use `?peek=true` to check for work without claiming it.
 
 ## Getting Started
 
@@ -41,7 +41,7 @@ Visit [http://localhost:3000](http://localhost:3000) and create your first accou
 Built-in support for running agents via [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), or [Gemini CLI](https://github.com/google-gemini/gemini-cli). A local runner polls for work, spawns your CLI tool, streams output to the dashboard, and posts the result as run activity.
 
 1. Dashboard → **New Agent** → select **Harbour Agent** and pick your CLI tool
-2. Name it, pick a model, create a job with a schedule and instructions
+2. Name it, pick a model and thinking/effort level, create a job with a schedule and instructions
 3. Install the runner:
 
 ```bash
@@ -57,6 +57,8 @@ npm run harbour -- agent uninstall   # stop the runner
 ```
 
 The runner injects the Harbour API credentials and endpoints into each prompt, so harbour agents can set run status (`done`, `waiting`, `failed`), post activity messages, and manage docs and databases — just like external agents. If an agent doesn't set a final status, the runner marks the run as failed.
+
+Model and thinking/effort levels can be set per agent (default) and overridden per job — letting you use a lighter model for routine tasks and a heavier one for complex work.
 
 ### External Agents
 
@@ -75,6 +77,7 @@ GET  /api/agents/:id/next           — get next run (or nothing)
 GET  /api/agents/:id/next?peek=true — check for work without claiming it
 PUT  /api/runs/:id/status           — update run status
 POST /api/runs/:id/activity         — add to the run's activity log
+POST /api/runs/:id/retry            — retry a failed/skipped run
 POST /api/docs                      — create a doc
 PUT  /api/docs/:id                  — update a doc
 POST /api/databases                 — create a database
@@ -94,13 +97,17 @@ scheduled → running → done
                     → waiting (needs human) → pending (human responded) → running → ...
 ```
 
+Failed and skipped runs can be retried from the dashboard — the run goes back to `pending` and the agent picks it up on next poll.
+
 ## Dashboard
 
-- **Runs** — running, scheduled, waiting, pending, and recent runs. Create one-off runs with "New Run."
-- **Jobs** — recurring jobs across agents, with run/skip counts and schedules.
-- **Agents** — list of agents with jobs, activity, and poll status.
-- **Docs** — shared knowledge base, editable by humans and agents.
+- **Runs** — running, scheduled, waiting, pending, and recent runs. Create one-off runs or recurring jobs from a unified dialog.
+- **Jobs** — recurring jobs across agents, with run/skip counts, schedules, and linked docs/env vars.
+- **Agents** — list of agents with jobs, activity, and poll status. Harbour agents show CLI tool, model, and thinking level.
+- **Docs** — shared knowledge base, editable by humans and agents. Pin docs to auto-attach to all new jobs.
 - **Databases** — read-only view of agent-managed SQLite tables.
+- **Env Vars** — encrypted variables (API keys, tokens) injected at runtime. Pin to auto-attach to all new jobs.
+- **Settings** — system timezone and signup control.
 
 Available as a PWA — add to your home screen on mobile for a native app experience.
 
@@ -113,6 +120,7 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HARBOUR_DB_PATH` | SQLite database file path | `./harbour.db` |
+| `HARBOUR_ENCRYPTION_KEY` | 64-char hex key for env var encryption | Auto-generated at `~/.harbour/encryption.key` |
 
 ## License
 
