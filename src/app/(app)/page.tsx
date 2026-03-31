@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Plus } from "lucide-react";
+import { Activity, Bot, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -135,52 +135,56 @@ export default function RunsPage() {
         </Button>
       </div>
 
-      {running.length > 0 && (
-        <section>
-          <SectionHeader count={running.length}>Running</SectionHeader>
-          <div className="space-y-2">
-            {running.map(run => <RunRow key={run.id} run={run} />)}
-          </div>
-        </section>
-      )}
+      {running.length === 0 && scheduled.length === 0 && waiting.length === 0 && pending.length === 0 && recent.length === 0 ? (
+        <EmptyState large icon={<Activity className="h-10 w-10 text-muted-foreground/40" />}>
+          No runs yet.
+        </EmptyState>
+      ) : (
+        <>
+          {running.length > 0 && (
+            <section>
+              <SectionHeader count={running.length}>Running</SectionHeader>
+              <div className="space-y-2">
+                {running.map(run => <RunRow key={run.id} run={run} />)}
+              </div>
+            </section>
+          )}
 
-      {scheduled.length > 0 && (
-        <section>
-          <SectionHeader count={scheduled.length}>Scheduled</SectionHeader>
-          <div className="space-y-2">
-            {scheduled.map(run => <RunRow key={run.id} run={run} />)}
-          </div>
-        </section>
-      )}
+          {scheduled.length > 0 && (
+            <section>
+              <SectionHeader count={scheduled.length}>Scheduled</SectionHeader>
+              <div className="space-y-2">
+                {scheduled.map(run => <RunRow key={run.id} run={run} />)}
+              </div>
+            </section>
+          )}
 
-      {waiting.length > 0 && (
-        <section>
-          <SectionHeader count={waiting.length}>Waiting</SectionHeader>
-          <div className="space-y-2">
-            {waiting.map(run => <RunRow key={run.id} run={run} />)}
-          </div>
-        </section>
-      )}
+          {waiting.length > 0 && (
+            <section>
+              <SectionHeader count={waiting.length}>Waiting</SectionHeader>
+              <div className="space-y-2">
+                {waiting.map(run => <RunRow key={run.id} run={run} />)}
+              </div>
+            </section>
+          )}
 
-      {pending.length > 0 && (
-        <section>
-          <SectionHeader count={pending.length}>Pending</SectionHeader>
-          <div className="space-y-2">
-            {pending.map(run => <RunRow key={run.id} run={run} />)}
-          </div>
-        </section>
-      )}
+          {pending.length > 0 && (
+            <section>
+              <SectionHeader count={pending.length}>Pending</SectionHeader>
+              <div className="space-y-2">
+                {pending.map(run => <RunRow key={run.id} run={run} />)}
+              </div>
+            </section>
+          )}
 
-      <section>
-        <SectionHeader>Recent</SectionHeader>
-        {recent.length === 0 ? (
-          <EmptyState>No runs yet.</EmptyState>
-        ) : (
-          <div className="space-y-2">
-            {recent.map(run => <RunRow key={run.id} run={run} />)}
-          </div>
-        )}
-      </section>
+          <section>
+            <SectionHeader>Recent</SectionHeader>
+            <div className="space-y-2">
+              {recent.map(run => <RunRow key={run.id} run={run} />)}
+            </div>
+          </section>
+        </>
+      )}
 
       {/* New Run Dialog */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
