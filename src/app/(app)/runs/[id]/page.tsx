@@ -257,7 +257,7 @@ export default function RunDetailPage() {
               <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> {retrying ? "Retrying..." : "Retry"}
             </Button>
           )}
-          {!run.one_off && (
+          {run.job_id && (
             <Link href={`/jobs/${run.job_id}`}>
               <Button variant="outline" size="sm">View Job</Button>
             </Link>
