@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import path from "path";
 import { normalizeSchedule } from "../schedule";
+import { encrypt } from "../encryption";
 
 const DB_PATH = process.env.HARBOUR_DB_PATH || path.join(process.cwd(), "harbour.db");
 
@@ -149,6 +150,39 @@ export function initializeSchema(db: Database.Database) {
       PRIMARY KEY (job_id, database_id)
     );
 
+    -- System settings: key-value store
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
+    -- Environment variables: encrypted key-value pairs injected at runtime
+    CREATE TABLE IF NOT EXISTS env_vars (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      encrypted_value TEXT NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Job-env linking: which env vars a job references
+    CREATE TABLE IF NOT EXISTS job_env_vars (
+      job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      env_var_id TEXT NOT NULL REFERENCES env_vars(id) ON DELETE CASCADE,
+      PRIMARY KEY (job_id, env_var_id)
+    );
+
+    -- Run output: raw streaming events from CLI agent execution
+    CREATE TABLE IF NOT EXISTS run_output (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      content TEXT,
+      tool_name TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
@@ -156,9 +190,12 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
     CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id);
+    CREATE INDEX IF NOT EXISTS idx_run_output_run ON run_output(run_id);
 
     CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id);
     CREATE INDEX IF NOT EXISTS idx_database_migrations_db ON database_migrations(database_id);
+    CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
+    CREATE INDEX IF NOT EXISTS idx_run_activity_run_time ON run_activity(run_id, created_at);
   `);
 
   // Migrations: drop agent_id from docs (now top-level)
@@ -249,4 +286,33 @@ export function initializeSchema(db: Database.Database) {
   if (!agentCols.some((c: any) => c.name === "model")) {
     db.exec(`ALTER TABLE agents ADD COLUMN model TEXT`);
   }
+  if (!agentCols.some((c: any) => c.name === "thinking")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN thinking TEXT`);
+  }
+
+  // Migrations: add pinned column to docs table
+  const docCols2 = db.prepare(`PRAGMA table_info(docs)`).all() as any[];
+  if (!docCols2.some((c: any) => c.name === "pinned")) {
+    db.exec(`ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
+  }
+
+  // Migrations: add model and thinking columns to jobs table
+  const jobCols2 = db.prepare(`PRAGMA table_info(jobs)`).all() as any[];
+  if (!jobCols2.some((c: any) => c.name === "model")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN model TEXT`);
+  }
+  if (!jobCols2.some((c: any) => c.name === "thinking")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN thinking TEXT`);
+  }
+
+  // Ensure encryption key exists (generates on first run)
+  try { encrypt("init"); } catch { /* non-fatal */ }
+
+  // Initialize default settings on first run
+  const hasTz = db.prepare(`SELECT 1 FROM settings WHERE key = 'timezone'`).get();
+  if (!hasTz) {
+    const systemTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`).run("timezone", systemTz);
+  }
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`).run("signup_enabled", "true");
 }

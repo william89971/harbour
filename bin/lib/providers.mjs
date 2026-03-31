@@ -17,18 +17,32 @@ function resolveBinary(name) {
   return binaryPathCache[name];
 }
 
-// Provider: how to invoke each CLI tool in batch mode
+// Normalized event types emitted by all providers:
+//   text_delta   — streaming text content
+//   tool_start   — agent started using a tool
+//   tool_end     — tool execution finished (with output)
+//   thinking     — model thinking/reasoning
+//   info         — system info (init, model, etc.)
+//   error        — error message
+//   result       — final summary
+
+// Provider: how to invoke each CLI tool in batch mode, with streaming support
 
 const PROVIDERS = {
   claude: {
-    // Claude: we generate our own session UUID, so we always know the session_id.
-    // Use --output-format text for clean output.
     generateSessionId() {
       return crypto.randomUUID();
     },
-    buildCommand(prompt, model, workingDir, sessionId, isNewSession) {
-      const args = ["-p", "--output-format", "text", "--dangerously-skip-permissions"];
+    buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking) {
+      const args = [
+        "-p",
+        "--output-format", "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+        "--dangerously-skip-permissions",
+      ];
       if (model) args.push("--model", model);
+      if (thinking) args.push("--effort", thinking);
       if (isNewSession && sessionId) {
         args.push("--session-id", sessionId);
       } else if (sessionId) {
@@ -37,30 +51,151 @@ const PROVIDERS = {
       args.push(prompt);
       return { binary: resolveBinary("claude"), args, cwd: workingDir };
     },
+    // Parse a single JSONL line into normalized events
+    parseLine(line) {
+      try {
+        const obj = JSON.parse(line);
+        const events = [];
+
+        if (obj.type === "system" && obj.subtype === "init") {
+          events.push({ event_type: "info", content: `Model: ${obj.model}` });
+          return { events, sessionId: obj.session_id };
+        }
+
+        if (obj.type === "stream_event" && obj.event) {
+          const evt = obj.event;
+          if (evt.type === "content_block_delta") {
+            if (evt.delta?.type === "text_delta" && evt.delta.text) {
+              events.push({ event_type: "text_delta", content: evt.delta.text });
+            }
+            if (evt.delta?.type === "thinking_delta" && evt.delta.thinking) {
+              events.push({ event_type: "thinking", content: evt.delta.thinking });
+            }
+          }
+          if (evt.type === "content_block_start" && evt.content_block?.type === "tool_use") {
+            events.push({
+              event_type: "tool_start",
+              content: null,
+              tool_name: evt.content_block.name,
+            });
+          }
+        }
+
+        // Tool result comes as an assistant message with tool_result content
+        if (obj.type === "assistant" && obj.message?.content) {
+          for (const block of obj.message.content) {
+            if (block.type === "tool_result") {
+              events.push({
+                event_type: "tool_end",
+                content: typeof block.content === "string" ? block.content : JSON.stringify(block.content),
+                tool_name: null,
+              });
+            }
+          }
+        }
+
+        if (obj.type === "result") {
+          events.push({
+            event_type: "result",
+            content: obj.result || null,
+          });
+          return { events, sessionId: obj.session_id };
+        }
+
+        return { events };
+      } catch {
+        return { events: [] };
+      }
+    },
     parseResult(stdout, presetSessionId) {
-      // With --output-format text, stdout is just the text response
-      return { content: stdout.trim(), sessionId: presetSessionId };
+      // Fallback full-parse for final content extraction
+      const lines = stdout.trim().split("\n");
+      let content = "";
+      let sessionId = presetSessionId;
+      for (const line of lines) {
+        try {
+          const obj = JSON.parse(line);
+          if (obj.type === "result" && obj.result) {
+            content = obj.result;
+          }
+          if (obj.session_id) sessionId = obj.session_id;
+        } catch { /* skip */ }
+      }
+      if (!content) content = stdout;
+      return { content: content.trim(), sessionId };
     },
   },
 
   codex: {
-    // Codex: session_id (thread_id) is captured from --json output
-    buildCommand(prompt, model, workingDir, sessionId) {
+    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
       if (sessionId) {
         const args = ["exec", "resume", "--dangerously-bypass-approvals-and-sandbox", "--json"];
         if (model) args.push("-m", model);
+        if (thinking) args.push("--reasoning-effort", thinking);
         args.push(sessionId, prompt);
         return { binary: resolveBinary("codex"), args, cwd: workingDir };
       }
       const args = ["exec", "--dangerously-bypass-approvals-and-sandbox", "--json"];
       if (model) args.push("-m", model);
+      if (thinking) args.push("--reasoning-effort", thinking);
       args.push(prompt);
       return { binary: resolveBinary("codex"), args, cwd: workingDir };
     },
+    parseLine(line) {
+      try {
+        const obj = JSON.parse(line);
+        const events = [];
+
+        if (obj.type === "thread.started" && obj.thread_id) {
+          events.push({ event_type: "info", content: `Thread: ${obj.thread_id}` });
+          return { events, sessionId: obj.thread_id };
+        }
+
+        if (obj.type === "item.started" && obj.item) {
+          if (obj.item.type === "command_execution") {
+            events.push({
+              event_type: "tool_start",
+              content: obj.item.command || null,
+              tool_name: "shell",
+            });
+          }
+        }
+
+        if (obj.type === "item.completed" && obj.item) {
+          if (obj.item.type === "agent_message" && obj.item.text) {
+            events.push({ event_type: "text_delta", content: obj.item.text });
+          }
+          if (obj.item.type === "command_execution") {
+            events.push({
+              event_type: "tool_end",
+              content: obj.item.aggregated_output != null && obj.item.aggregated_output !== ""
+                ? obj.item.aggregated_output
+                : `exit ${obj.item.exit_code}`,
+              tool_name: "shell",
+            });
+          }
+        }
+
+        if (obj.type === "turn.completed") {
+          events.push({
+            event_type: "result",
+            content: obj.usage ? `Tokens: ${obj.usage.input_tokens} in / ${obj.usage.output_tokens} out` : null,
+          });
+        }
+
+        return { events };
+      } catch {
+        return { events: [] };
+      }
+    },
+    // Only use the last assistant message as the activity summary. Codex emits
+    // multiple agent_message items during a run (narration before each tool call,
+    // then a final summary). Concatenating all of them produces a verbose dump;
+    // the last message is the natural summary of what was done.
     parseResult(stdout) {
       const lines = stdout.trim().split("\n");
       let sessionId = null;
-      let content = "";
+      let lastMessage = "";
 
       for (const line of lines) {
         try {
@@ -68,49 +203,97 @@ const PROVIDERS = {
           if (obj.type === "thread.started" && obj.thread_id) {
             sessionId = obj.thread_id;
           }
-          // item.completed can have text directly or in content array
           if (obj.type === "item.completed" && obj.item) {
             if (obj.item.text) {
-              content += obj.item.text + "\n";
+              lastMessage = obj.item.text;
             } else if (obj.item.content) {
+              let text = "";
               for (const c of obj.item.content) {
                 if (c.type === "output_text" || c.type === "text") {
-                  content += (c.text || "") + "\n";
+                  text += (c.text || "") + "\n";
                 }
               }
+              if (text.trim()) lastMessage = text.trim();
             }
           }
           if (obj.type === "message.completed" && obj.message) {
             if (obj.message.text) {
-              content += obj.message.text + "\n";
+              lastMessage = obj.message.text;
             } else if (obj.message.content) {
+              let text = "";
               for (const c of obj.message.content) {
                 if (c.type === "output_text" || c.type === "text") {
-                  content += (c.text || "") + "\n";
+                  text += (c.text || "") + "\n";
                 }
               }
+              if (text.trim()) lastMessage = text.trim();
             }
           }
-        } catch {
-          // Not JSON line
-        }
+        } catch { /* Not JSON line */ }
       }
 
-      if (!content.trim()) content = stdout;
-      return { content: content.trim(), sessionId };
+      if (!lastMessage.trim()) lastMessage = stdout;
+      return { content: lastMessage.trim(), sessionId };
     },
   },
 
   gemini: {
-    // Gemini: -p takes the prompt as its value. Use -o stream-json to capture session_id.
-    buildCommand(prompt, model, workingDir, sessionId) {
+    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
       const args = ["--prompt", prompt, "--yolo", "-o", "stream-json"];
       if (model) args.push("-m", model);
+      if (thinking) args.push("--thinking", thinking);
       if (sessionId) {
         args.push("--resume", sessionId);
       }
       return { binary: resolveBinary("gemini"), args, cwd: workingDir };
     },
+    parseLine(line) {
+      try {
+        const obj = JSON.parse(line);
+        const events = [];
+
+        if (obj.type === "init" && obj.session_id) {
+          events.push({ event_type: "info", content: `Model: ${obj.model}` });
+          return { events, sessionId: obj.session_id };
+        }
+
+        if (obj.type === "message" && obj.role === "assistant" && obj.content) {
+          events.push({ event_type: "text_delta", content: obj.content });
+        }
+
+        if (obj.type === "tool_use") {
+          events.push({
+            event_type: "tool_start",
+            content: obj.parameters ? JSON.stringify(obj.parameters) : null,
+            tool_name: obj.tool_name || null,
+          });
+        }
+
+        if (obj.type === "tool_result") {
+          events.push({
+            event_type: "tool_end",
+            content: obj.output || null,
+            tool_name: null,
+          });
+        }
+
+        if (obj.type === "result") {
+          const stats = obj.stats;
+          events.push({
+            event_type: "result",
+            content: stats ? `Tokens: ${stats.input_tokens} in / ${stats.output_tokens} out, ${stats.duration_ms}ms` : null,
+          });
+        }
+
+        return { events };
+      } catch {
+        return { events: [] };
+      }
+    },
+    // Only use the last assistant turn as the activity summary. Gemini streams
+    // multiple assistant message deltas across turns — early ones are narration
+    // before tool calls, the final turn is the actual summary. We reset on
+    // tool_result boundaries so we capture only the post-tool response.
     parseResult(stdout) {
       const lines = stdout.trim().split("\n");
       let sessionId = null;
@@ -119,17 +302,16 @@ const PROVIDERS = {
       for (const line of lines) {
         try {
           const obj = JSON.parse(line);
-          // session_id from init event
           if (obj.type === "init" && obj.session_id) {
             sessionId = obj.session_id;
           }
-          // Assistant messages (delta: true are streaming chunks)
+          if (obj.type === "tool_result") {
+            content = ""; // reset — next assistant messages are the final turn
+          }
           if (obj.type === "message" && obj.role === "assistant" && obj.content) {
             content += obj.content;
           }
-        } catch {
-          // Not JSON — skip stderr noise
-        }
+        } catch { /* Not JSON — skip stderr noise */ }
       }
 
       if (!content.trim()) content = stdout;
@@ -152,10 +334,13 @@ export function ensureWorkingDir(agentName) {
   return dir;
 }
 
-export function runCliTool(binary, args, cwd, timeoutMs = 10 * 60 * 1000) {
+/**
+ * Run a CLI tool, streaming JSONL output line-by-line to onLine callback.
+ * Returns { code, stdout, stderr } when the process exits.
+ */
+export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, onLine } = {}) {
   return new Promise((resolve, reject) => {
-    // Build clean environment: strip Claude Code nesting guards that prevent
-    // spawned CLI tools from running inside a Claude Code session
+    // Build clean environment: strip Claude Code nesting guards
     const env = { ...process.env };
     delete env.CLAUDECODE;
     delete env.CLAUDE_CODE_ENTRYPOINT;
@@ -169,14 +354,53 @@ export function runCliTool(binary, args, cwd, timeoutMs = 10 * 60 * 1000) {
       timeout: timeoutMs,
     });
 
+    // Close stdin immediately — CLI tools should not wait for interactive input
+    child.stdin.end();
+
     let stdout = "";
     let stderr = "";
+    let lineBuffer = "";
+    let gotOutput = false;
 
-    child.stdout.on("data", (data) => { stdout += data.toString(); });
+    // Kill the process if no stdout arrives within the startup window.
+    // Catches auth prompts, interactive login hangs, etc.
+    const startupTimer = setTimeout(() => {
+      if (!gotOutput) {
+        child.kill("SIGTERM");
+        // Give it a moment to exit, then force kill
+        setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 2000);
+      }
+    }, startupTimeoutMs);
+
+    child.stdout.on("data", (data) => {
+      if (!gotOutput) {
+        gotOutput = true;
+        clearTimeout(startupTimer);
+      }
+      const chunk = data.toString();
+      stdout += chunk;
+
+      if (onLine) {
+        lineBuffer += chunk;
+        const lines = lineBuffer.split("\n");
+        // Keep the last incomplete line in the buffer
+        lineBuffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed) onLine(trimmed);
+        }
+      }
+    });
+
     child.stderr.on("data", (data) => { stderr += data.toString(); });
 
-    child.on("error", (err) => reject(err));
+    child.on("error", (err) => { clearTimeout(startupTimer); reject(err); });
     child.on("close", (code) => {
+      clearTimeout(startupTimer);
+      // Flush remaining buffer
+      if (onLine && lineBuffer.trim()) {
+        onLine(lineBuffer.trim());
+      }
       resolve({ code, stdout, stderr });
     });
   });

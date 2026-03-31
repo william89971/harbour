@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth, requireAgentOwnership } from "@/lib/auth";
 import { getRunById, updateRunStatus, addRunActivity } from "@/lib/db/queries";
 
 const VALID_STATUSES = ["running", "waiting", "pending", "done", "failed", "skipped"];
 
-export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const PUT = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const run = getRunById(id);
   if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
+
+  const ownerError = requireAgentOwnership(auth, run.agent_id);
+  if (ownerError) return ownerError;
 
   const body = await req.json();
   if (!body.status || !VALID_STATUSES.includes(body.status)) {
@@ -23,4 +22,4 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   addRunActivity(id, "system", null, "System", `Status changed to **${body.status}**`);
 
   return NextResponse.json(updated);
-}
+});

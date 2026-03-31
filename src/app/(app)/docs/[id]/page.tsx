@@ -1,20 +1,21 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
-import { Pencil, Save, X, Trash2, History } from "lucide-react";
+import { Pencil, Save, X, Trash2, History, Pin } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 
 type Doc = {
-  id: string; title: string;
+  id: string; title: string; pinned: number;
   content: string; created_at: number; updated_at: number;
 };
 
@@ -26,45 +27,58 @@ type Revision = {
 export default function DocDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
-  const [doc, setDoc] = useState<Doc | null>(null);
-  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(searchParams.get("edit") === "1");
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [showRevisions, setShowRevisions] = useState(false);
   const [revisions, setRevisions] = useState<Revision[]>([]);
+  const [editInitialized, setEditInitialized] = useState(false);
 
-  const loadDoc = useCallback(async () => {
-    const res = await fetch(`/api/docs/${id}`);
-    if (res.ok) {
-      const d = await res.json();
-      setDoc(d);
-      setEditTitle(d.title);
-      setEditContent(d.content || "");
-    }
-    setLoading(false);
-  }, [id]);
+  const { data: doc = null, isLoading: loading } = useQuery<Doc | null>({
+    queryKey: ["docs", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/docs/${id}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
 
-  useEffect(() => { loadDoc(); }, [loadDoc]);
+  // Initialize edit fields from doc data once
+  if (doc && !editInitialized) {
+    setEditTitle(doc.title);
+    setEditContent(doc.content || "");
+    setEditInitialized(true);
+  }
 
   async function handleSave() {
     setSaving(true);
-    await fetch(`/api/docs/${id}`, {
+    const res = await fetch(`/api/docs/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: editTitle, content: editContent }),
     });
     setSaving(false);
+    if (!res.ok) { alert("Failed to save doc"); return; }
     setEditing(false);
-    loadDoc();
+    setEditInitialized(false);
+    queryClient.invalidateQueries({ queryKey: ["docs", id] });
   }
 
   async function handleDelete() {
     if (!confirm(`Delete "${doc?.title}"?`)) return;
-    await fetch(`/api/docs/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/docs/${id}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to delete doc"); return; }
     router.push("/docs");
+  }
+
+  async function handleTogglePin() {
+    const res = await fetch(`/api/docs/${id}/pin`, { method: "POST" });
+    if (!res.ok) { alert("Failed to toggle pin"); return; }
+    queryClient.invalidateQueries({ queryKey: ["docs", id] });
   }
 
   async function loadRevisions() {
@@ -89,7 +103,7 @@ export default function DocDetailPage() {
         <div className="flex gap-1.5">
           {editing ? (
             <>
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditing(false); setEditTitle(doc.title); setEditContent(doc.content || ""); }}>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditing(false); setEditInitialized(false); setEditTitle(doc.title); setEditContent(doc.content || ""); }}>
                 <X className="h-3.5 w-3.5" />
               </Button>
               <Button size="icon" className="h-8 w-8" onClick={handleSave} disabled={saving}>
@@ -98,6 +112,9 @@ export default function DocDetailPage() {
             </>
           ) : (
             <>
+              <Button variant={doc.pinned ? "default" : "outline"} size="icon" className="h-8 w-8" onClick={handleTogglePin} title={doc.pinned ? "Unpin" : "Pin to all jobs"}>
+                <Pin className="h-3.5 w-3.5" />
+              </Button>
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={loadRevisions} title="Revisions">
                 <History className="h-3.5 w-3.5" />
               </Button>

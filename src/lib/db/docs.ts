@@ -54,11 +54,22 @@ export function deleteDoc(id: string) {
 export function listDocs() {
   const db = getDb();
   return db.prepare(`
-    SELECT d.id, d.title, d.created_at, d.updated_at,
+    SELECT d.id, d.title, d.pinned, d.created_at, d.updated_at,
       (SELECT COUNT(*) FROM doc_revisions WHERE doc_id = d.id) as revision_count
     FROM docs d
-    ORDER BY d.title ASC
+    ORDER BY d.pinned DESC, d.title ASC
   `).all();
+}
+
+export function toggleDocPinned(id: string) {
+  const db = getDb();
+  db.prepare(`UPDATE docs SET pinned = CASE WHEN pinned = 1 THEN 0 ELSE 1 END, updated_at = unixepoch() WHERE id = ?`).run(id);
+  return getDocById(id);
+}
+
+export function listPinnedDocIds(): string[] {
+  const db = getDb();
+  return (db.prepare(`SELECT id FROM docs WHERE pinned = 1`).all() as { id: string }[]).map(r => r.id);
 }
 
 export function getDocRevisions(docId: string) {

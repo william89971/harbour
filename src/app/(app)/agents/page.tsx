@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -11,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Bot, Plus, Briefcase, Copy, Check, Terminal, ExternalLink, Loader2, CheckCircle, XCircle } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
+import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 
 type Agent = {
   id: string;
@@ -33,15 +35,21 @@ type CliTool = {
   version?: string;
 };
 
-const DEFAULT_MODELS: Record<string, string[]> = {
-  claude: ["sonnet", "opus", "haiku"],
-  codex: ["gpt-5.4", "o3", "gpt-4.1"],
-  gemini: ["gemini-2.5-pro", "gemini-2.5-flash"],
-};
+import { CLI_CONFIG } from "@/lib/cli-config";
 
 export default function AgentsPage() {
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  const { data: agents = [], isLoading: loading } = useQuery<Agent[]>({
+    queryKey: ["agents"],
+    queryFn: async () => {
+      const res = await fetch("/api/agents");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -57,14 +65,8 @@ export default function AgentsPage() {
   const [loadingTools, setLoadingTools] = useState(false);
   const [selectedCli, setSelectedCli] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [selectedThinking, setSelectedThinking] = useState<string>("");
 
-  async function loadAgents() {
-    const res = await fetch("/api/agents");
-    if (res.ok) setAgents(await res.json());
-    setLoading(false);
-  }
-
-  useEffect(() => { loadAgents(); }, []);
 
   async function loadCliTools() {
     setLoadingTools(true);
@@ -82,8 +84,9 @@ export default function AgentsPage() {
 
   function handleCliSelect(cliId: string) {
     setSelectedCli(cliId);
-    const models = DEFAULT_MODELS[cliId] || [];
-    setSelectedModel(models[0] || "");
+    const config = CLI_CONFIG[cliId];
+    setSelectedModel(config?.models[0] || "");
+    setSelectedThinking("");
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -96,6 +99,7 @@ export default function AgentsPage() {
       body.type = "harbour";
       body.cli = selectedCli!;
       body.model = selectedModel;
+      if (selectedThinking) body.thinking = selectedThinking;
     }
 
     const res = await fetch("/api/agents", {
@@ -108,7 +112,7 @@ export default function AgentsPage() {
       setNewAgent({ id: data.id, name: data.name, apiKey: data.apiKey, type: agentType || "external" });
       setName("");
       setDescription("");
-      loadAgents();
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
     }
     setCreating(false);
   }
@@ -116,18 +120,22 @@ export default function AgentsPage() {
   function getInviteText() {
     if (!newAgent) return "";
     const base = typeof window !== "undefined" ? window.location.origin : "";
-    return `You're being invited to Harbour, a control plane that manages your recurring jobs, shared docs, and data stores.
+    return `You're being invited to Harbour, a control plane that manages your recurring jobs, shared docs, and data stores. You poll for work, do the work, and report back.
 
-Save these credentials to your memory now:
+Credentials (save these now):
 - Agent ID: ${newAgent.id}
 - API Key: ${newAgent.apiKey}
 - Base URL: ${base}
-- Poll endpoint: GET ${base}/api/agents/${newAgent.id}/next (Authorization: Bearer <key>)
-- Guide: GET ${base}/api/guide
 
-IMPORTANT: Read the full guide at the URL above before doing anything. Do NOT copy the guide contents into your memory — fetch it each time you need to reference it so you always have the latest version.
+Your main loop:
+1. Check for work: GET ${base}/api/agents/${newAgent.id}/next?peek=true (Authorization: Bearer <key>)
+   Returns { available: true/false }. Only proceed to step 2 if work is available — this avoids unnecessary LLM calls.
+2. Claim and start work: GET ${base}/api/agents/${newAgent.id}/next
+   Returns the full run context: job instructions, docs, data, activity log, and an "api" section with all available endpoints and status options for this run.
+3. Do the work, then use the endpoints in the "api" section to post activity and set a final status (done/waiting/failed).
 
-The guide covers everything: polling, scheduling, run lifecycle, docs, databases, and the full API. Follow it exactly.`;
+Full API spec: GET ${base}/api/guide
+Do NOT copy the guide into memory — fetch it each time so you always have the latest version.`;
   }
 
   function handleCopy() {
@@ -143,6 +151,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
     setAgentType(null);
     setSelectedCli(null);
     setSelectedModel("");
+    setSelectedThinking("");
     setCliTools([]);
   }
 
@@ -317,26 +326,22 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
                 <Label htmlFor="agent-desc">Description</Label>
                 <Textarea id="agent-desc" value={description} onChange={e => setDescription(e.target.value)} placeholder="What does this agent do?" rows={2} />
               </div>
-              {agentType === "harbour" && selectedCli && (
-                <div className="space-y-2">
-                  <Label htmlFor="agent-model">Model</Label>
-                  <select
-                    id="agent-model"
-                    value={selectedModel}
-                    onChange={e => setSelectedModel(e.target.value)}
-                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    {(DEFAULT_MODELS[selectedCli] || []).map(m => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
+              {agentType === "harbour" && selectedCli && CLI_CONFIG[selectedCli] && (
+                <ModelThinkingSelect
+                  cli={selectedCli}
+                  model={selectedModel}
+                  thinking={selectedThinking}
+                  onModelChange={setSelectedModel}
+                  onThinkingChange={setSelectedThinking}
+                  defaultThinkingLabel="Default"
+                />
               )}
               <DialogFooter>
                 <Button type="button" variant="ghost" onClick={() => {
                   if (agentType === "harbour") {
                     setSelectedCli(null);
                     setSelectedModel("");
+                    setSelectedThinking("");
                   } else {
                     setAgentType(null);
                   }

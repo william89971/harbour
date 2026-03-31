@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/app/section-header";
@@ -15,77 +16,102 @@ import { BackLink } from "@/components/app/back-link";
 import { parseSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
   Bot, Settings, Key, Copy, Check, Calendar, Activity, Wifi, FileText,
-  Briefcase, Trash2,
+  Briefcase, Trash2, Terminal, Cpu, Brain,
 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
 
-type Agent = { id: string; name: string; description: string | null; last_polled_at: number | null; created_at: number };
+import { CLI_CONFIG } from "@/lib/cli-config";
+import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
+
+type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; last_polled_at: number | null; created_at: number };
 type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; check_command: string | null };
 type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
 export default function AgentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const [agent, setAgent] = useState<Agent | null>(null);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [waitingRuns, setWaitingRuns] = useState<Run[]>([]);
-  const [pendingRuns, setPendingRuns] = useState<Run[]>([]);
-  const [recentRuns, setRecentRuns] = useState<Run[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  const { data: agentData, isLoading: agentLoading } = useQuery({
+    queryKey: ["agents", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${id}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: jobs = [] } = useQuery<Job[]>({
+    queryKey: ["agents", id, "jobs"],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${id}/jobs`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: waitingData = [] } = useQuery({
+    queryKey: ["runs", "waiting"],
+    queryFn: async () => {
+      const res = await fetch("/api/runs?filter=waiting");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: recentData = [] } = useQuery({
+    queryKey: ["runs", "recent"],
+    queryFn: async () => {
+      const res = await fetch("/api/runs?filter=recent");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const agent: Agent | null = agentData ?? null;
+  const loading = agentLoading;
+  const agentWaiting = Array.isArray(waitingData) ? waitingData.filter((r: any) => r.agent_id === id) : [];
+  const waitingRuns = agentWaiting.filter((r: Run) => r.status === "waiting");
+  const pendingRuns = agentWaiting.filter((r: Run) => r.status === "pending");
+  const recentRuns = (Array.isArray(recentData) ? recentData.filter((r: any) => r.agent_id === id) : []).slice(0, 25);
 
   // Dialogs
   const [showSettings, setShowSettings] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
+  const [editModel, setEditModel] = useState("");
+  const [editThinking, setEditThinking] = useState("");
   const [showRotateKey, setShowRotateKey] = useState(false);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
 
-  const loadAll = useCallback(async () => {
-    const [agentRes, jobsRes, waitingRes, recentRes] = await Promise.all([
-      fetch(`/api/agents/${id}`),
-      fetch(`/api/agents/${id}/jobs`),
-      fetch(`/api/runs?filter=waiting`),
-      fetch(`/api/runs?filter=recent`),
-    ]);
-    if (agentRes.ok) {
-      const a = await agentRes.json();
-      setAgent(a);
-      setEditName(a.name);
-      setEditDesc(a.description || "");
-    }
-    if (jobsRes.ok) setJobs(await jobsRes.json());
-    if (waitingRes.ok) {
-      const all = await waitingRes.json();
-      const agentRuns = Array.isArray(all) ? all.filter((r: any) => r.agent_id === id) : [];
-      setWaitingRuns(agentRuns.filter((r: Run) => r.status === "waiting"));
-      setPendingRuns(agentRuns.filter((r: Run) => r.status === "pending"));
-    }
-    if (recentRes.ok) {
-      const all = await recentRes.json();
-      setRecentRuns(Array.isArray(all) ? all.filter((r: any) => r.agent_id === id).slice(0, 25) : []);
-    }
-    setLoading(false);
-  }, [id]);
-
-  useEffect(() => { loadAll(); }, [loadAll]);
-
   async function handleUpdateAgent() {
-    await fetch(`/api/agents/${id}`, {
+    const body: Record<string, string> = { name: editName, description: editDesc };
+    if (agent?.type === "harbour") {
+      body.model = editModel;
+      body.thinking = editThinking;
+    }
+    const res = await fetch(`/api/agents/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: editName, description: editDesc }),
+      body: JSON.stringify(body),
     });
+    if (!res.ok) { alert("Failed to update agent"); return; }
     setShowSettings(false);
-    loadAll();
+    queryClient.invalidateQueries({ queryKey: ["agents"] });
   }
 
   async function handleDeleteAgent() {
     if (!confirm(`Delete "${agent?.name}"? All jobs and runs will be permanently removed.`)) return;
-    await fetch(`/api/agents/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/agents/${id}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to delete agent"); return; }
     router.push("/agents");
   }
 
@@ -141,24 +167,49 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
             <Bot className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">{agent.name}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-semibold tracking-tight">{agent.name}</h1>
+              {agent.type === "harbour" && agent.cli && (
+                <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{agent.cli}</span>
+              )}
+            </div>
             {agent.description && <p className="text-sm text-muted-foreground mt-0.5">{agent.description}</p>}
           </div>
         </div>
         <div className="flex gap-1.5">
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowInvite(true)} title="Copy Invite">
-            <FileText className="h-3.5 w-3.5" />
-          </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowRotateKey(true)} title="API Key">
-            <Key className="h-3.5 w-3.5" />
-          </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowSettings(true)} title="Settings">
+          {agent.type === "external" && (
+            <>
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowInvite(true)} title="Copy Invite">
+                <FileText className="h-3.5 w-3.5" />
+              </Button>
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowRotateKey(true)} title="API Key">
+                <Key className="h-3.5 w-3.5" />
+              </Button>
+            </>
+          )}
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setShowSettings(true); }} title="Settings">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-3 gap-x-4 rounded-lg border p-3">
+        <div className="flex items-center gap-2 text-sm">
+          <Terminal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground truncate">{agent.type === "harbour" ? "Harbour" : "External"}</span>
+        </div>
+        {agent.type === "harbour" && agent.model && (
+          <div className="flex items-center gap-2 text-sm">
+            <Cpu className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground truncate">{agent.model}</span>
+          </div>
+        )}
+        {agent.type === "harbour" && agent.cli && (
+          <div className="flex items-center gap-2 text-sm">
+            <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground truncate">{agent.thinking || "Default"}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2 text-sm">
           <Briefcase className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-muted-foreground truncate">{jobs.length} {jobs.length === 1 ? "job" : "jobs"}</span>
@@ -283,6 +334,16 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
               <Label>Description</Label>
               <Textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} rows={2} />
             </div>
+            {agent.type === "harbour" && agent.cli && CLI_CONFIG[agent.cli] && (
+              <ModelThinkingSelect
+                cli={agent.cli}
+                model={editModel}
+                thinking={editThinking}
+                onModelChange={setEditModel}
+                onThinkingChange={setEditThinking}
+                defaultThinkingLabel="Default"
+              />
+            )}
           </div>
           <DialogFooter>
             <Button variant="destructive" onClick={handleDeleteAgent} className="mr-auto"><Trash2 className="h-4 w-4 mr-1" /> Delete</Button>

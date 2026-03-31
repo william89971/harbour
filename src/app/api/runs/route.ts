@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth } from "@/lib/auth";
 import { listRunningRuns, listWaitingRuns, listRecentRuns, listScheduledRuns, createOneOffRun } from "@/lib/db/queries";
 
-export async function GET(req: NextRequest) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const GET = withAuth(async (req) => {
   const filter = req.nextUrl.searchParams.get("filter");
   if (filter === "waiting") {
     return NextResponse.json(listWaitingRuns());
@@ -22,13 +18,9 @@ export async function GET(req: NextRequest) {
     waiting: listWaitingRuns(),
     recent: listRecentRuns(),
   });
-}
+});
 
-export async function POST(req: NextRequest) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const POST = withAuth(async (req) => {
   const body = await req.json();
   if (!body.agentId || !body.name) {
     return NextResponse.json({ error: "agentId and name are required" }, { status: 400 });
@@ -38,8 +30,9 @@ export async function POST(req: NextRequest) {
     name: body.name,
     instructions: body.instructions,
     docIds: body.docIds,
+    envVarIds: body.envVarIds,
     runAt: body.runAt,
   });
 
   return NextResponse.json(result, { status: 201 });
-}
+});

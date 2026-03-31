@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Anchor, LogOut } from "lucide-react";
@@ -16,7 +17,6 @@ export { useApp } from "./app-context";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [waitingCount, setWaitingCount] = useState(0);
   const router = useRouter();
 
   useEffect(() => {
@@ -33,25 +33,30 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }).catch(() => { window.location.href = "/login"; });
   }, [router]);
 
+  // Fetch system timezone
+  const { data: timezone = Intl.DateTimeFormat().resolvedOptions().timeZone } = useQuery({
+    queryKey: ["settings", "timezone"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings");
+      if (!res.ok) return Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const data = await res.json();
+      return data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    },
+    enabled: !!user,
+  });
+
   // Poll waiting runs count
-  useEffect(() => {
-    if (!user) return;
-    let active = true;
-
-    async function poll() {
-      try {
-        const res = await fetch("/api/runs?filter=waiting");
-        if (res.ok && active) {
-          const data = await res.json();
-          setWaitingCount(Array.isArray(data) ? data.length : 0);
-        }
-      } catch {}
-    }
-
-    poll();
-    const interval = setInterval(poll, 30000);
-    return () => { active = false; clearInterval(interval); };
-  }, [user]);
+  const { data: waitingCount = 0 } = useQuery({
+    queryKey: ["runs", "waiting-count"],
+    queryFn: async () => {
+      const res = await fetch("/api/runs?filter=waiting");
+      if (!res.ok) return 0;
+      const data = await res.json();
+      return Array.isArray(data) ? data.length : 0;
+    },
+    refetchInterval: 5000,
+    enabled: !!user,
+  });
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -91,7 +96,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <AppContext.Provider value={{ user, waitingCount }}>
+    <AppContext.Provider value={{ user, waitingCount, timezone }}>
       <div className="flex h-dvh standalone:h-screen">
         <aside className="hidden w-56 shrink-0 border-r bg-sidebar md:block">
           {sidebar}

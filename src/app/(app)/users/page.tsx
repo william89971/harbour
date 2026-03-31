@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { User } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
@@ -8,12 +8,15 @@ import { EmptyState } from "@/components/app/empty-state";
 type UserType = { id: string; email: string; display_name: string; created_at: number };
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<UserType[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch("/api/users").then(r => r.json()).then(setUsers).finally(() => setLoading(false));
-  }, []);
+  const { data: users = [], isLoading: loading } = useQuery<UserType[]>({
+    queryKey: ["users"],
+    queryFn: async () => {
+      const res = await fetch("/api/users");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
 

@@ -217,9 +217,13 @@ export function getRows(databaseId: string, opts?: {
   let sql = `SELECT * FROM "${meta.table_name}"`;
 
   if (opts?.orderBy) {
-    const safeCol = sanitizeName(opts.orderBy);
+    // Validate orderBy against actual column names
+    const columns = (db.pragma(`table_info("${meta.table_name}")`) as ColumnInfo[]).map(c => c.name);
+    if (!columns.includes(opts.orderBy)) {
+      throw new Error(`Invalid orderBy column: "${opts.orderBy}"`);
+    }
     const dir = opts?.order === "ASC" ? "ASC" : "DESC";
-    sql += ` ORDER BY "${safeCol}" ${dir}`;
+    sql += ` ORDER BY "${opts.orderBy}" ${dir}`;
   } else {
     sql += ` ORDER BY _id DESC`;
   }

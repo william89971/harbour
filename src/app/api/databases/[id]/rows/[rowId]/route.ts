@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth } from "@/lib/auth";
 import { getDatabaseById, updateRow, deleteRow } from "@/lib/db/queries";
 
-export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string; rowId: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const PUT = withAuth(async (req, auth, { params }) => {
   const { id, rowId } = await params;
   const db = getDatabaseById(id);
   if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
@@ -18,13 +14,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
-}
+});
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string; rowId: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const DELETE = withAuth(async (req, auth, { params }) => {
   const { id, rowId } = await params;
   const db = getDatabaseById(id);
   if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
@@ -35,4 +27,4 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
-}
+});

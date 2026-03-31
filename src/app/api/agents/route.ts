@@ -1,26 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth, withUserAuth } from "@/lib/auth";
 import { listAgents, createAgent } from "@/lib/db/queries";
 import { saveRunnerConfig } from "@/lib/runners";
 
-export async function GET(req: NextRequest) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const GET = withAuth(async () => {
   return NextResponse.json(listAgents());
-}
+});
 
-export async function POST(req: NextRequest) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-  if (auth!.type !== "user") {
-    return NextResponse.json({ error: "Only users can create agents" }, { status: 403 });
-  }
-
+export const POST = withUserAuth(async (req) => {
   const body = await req.json();
-  const { name, description, type, cli, model } = body;
+  const { name, description, type, cli, model, thinking } = body;
   if (!name) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
@@ -30,7 +19,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const agent = createAgent(name, description, type === "harbour" ? { type, cli, model } : undefined);
+  const agent = createAgent(name, description, type === "harbour" ? { type, cli, model, thinking } : undefined);
 
   // For harbour agents, save runner config locally so the CLI can poll
   if (type === "harbour") {
@@ -41,9 +30,10 @@ export async function POST(req: NextRequest) {
       apiKey: agent.apiKey,
       cli: cli,
       model: model || null,
+      thinking: thinking || null,
       url: baseUrl,
     });
   }
 
   return NextResponse.json(agent, { status: 201 });
-}
+});

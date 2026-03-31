@@ -1,6 +1,9 @@
 import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 import { getNextRunTime } from "../schedule";
+import { listPinnedDocIds } from "./docs";
+import { listPinnedEnvVarIds } from "./env-vars";
+import { getTimezone } from "./settings";
 
 export function createJob(agentId: string, data: {
   name: string;
@@ -8,20 +11,41 @@ export function createJob(agentId: string, data: {
   instructions?: string;
   schedule: string;
   checkCommand?: string;
+  model?: string;
+  thinking?: string;
+  docIds?: string[];
+  envVarIds?: string[];
   active?: boolean;
 }) {
   const db = getDb();
   const id = uuid();
-  const nextRunAt = data.active !== false ? getNextRunTime(data.schedule) : null;
-  db.prepare(`
-    INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, check_command, active, next_run_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id, agentId, data.name, data.description || null,
-    data.instructions || null, data.schedule,
-    data.checkCommand || null, data.active !== false ? 1 : 0,
-    nextRunAt
-  );
+  const nextRunAt = data.active !== false ? getNextRunTime(data.schedule, undefined, getTimezone()) : null;
+
+  const create = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, check_command, model, thinking, active, next_run_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, agentId, data.name, data.description || null,
+      data.instructions || null, data.schedule,
+      data.checkCommand || null, data.model || null, data.thinking || null,
+      data.active !== false ? 1 : 0, nextRunAt
+    );
+
+    // Merge explicitly selected docs/env vars with pinned ones
+    const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds()]);
+    if (allDocIds.size > 0) {
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
+      for (const docId of allDocIds) linkStmt.run(id, docId);
+    }
+    const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds()]);
+    if (allEnvVarIds.size > 0) {
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
+      for (const envId of allEnvVarIds) linkStmt.run(id, envId);
+    }
+  });
+
+  create();
   return getJobById(id);
 }
 
@@ -47,7 +71,13 @@ export function getJobById(id: string) {
     WHERE jd.job_id = ?
   `).all(id);
 
-  return { ...job, docs, databases };
+  const envVars = db.prepare(`
+    SELECT ev.id, ev.name FROM job_env_vars jev
+    JOIN env_vars ev ON jev.env_var_id = ev.id
+    WHERE jev.job_id = ?
+  `).all(id);
+
+  return { ...job, docs, databases, envVars };
 }
 
 export function listJobsByAgent(agentId: string) {
@@ -83,6 +113,8 @@ export function updateJob(id: string, data: {
   instructions?: string;
   schedule?: string;
   checkCommand?: string;
+  model?: string;
+  thinking?: string;
   timeoutMinutes?: number;
 
   active?: boolean;
@@ -96,6 +128,8 @@ export function updateJob(id: string, data: {
   if (data.instructions !== undefined) { fields.push("instructions = ?"); values.push(data.instructions); }
   if (data.schedule !== undefined) { fields.push("schedule = ?"); values.push(data.schedule); }
   if (data.checkCommand !== undefined) { fields.push("check_command = ?"); values.push(data.checkCommand); }
+  if (data.model !== undefined) { fields.push("model = ?"); values.push(data.model || null); }
+  if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }
   if (data.timeoutMinutes !== undefined) { fields.push("timeout_minutes = ?"); values.push(data.timeoutMinutes); }
 
   if (data.active !== undefined) { fields.push("active = ?"); values.push(data.active ? 1 : 0); }
@@ -116,6 +150,7 @@ export function createOneOffRun(agentId: string, data: {
   name: string;
   instructions?: string;
   docIds?: string[];
+  envVarIds?: string[];
   runAt?: number;
 }) {
   const db = getDb();
@@ -124,25 +159,35 @@ export function createOneOffRun(agentId: string, data: {
   const now = Math.floor(Date.now() / 1000);
   const runAt = data.runAt || now;
 
-  // Create the backing job (hidden, one_off)
-  db.prepare(`
-    INSERT INTO jobs (id, agent_id, name, instructions, schedule, one_off, active, next_run_at)
-    VALUES (?, ?, ?, ?, '{}', 1, 1, ?)
-  `).run(jobId, agentId, data.name, data.instructions || null, runAt);
+  const create = db.transaction(() => {
+    // Create the backing job (hidden, one_off)
+    db.prepare(`
+      INSERT INTO jobs (id, agent_id, name, instructions, schedule, one_off, active, next_run_at)
+      VALUES (?, ?, ?, ?, '{}', 1, 1, ?)
+    `).run(jobId, agentId, data.name, data.instructions || null, runAt);
 
-  if (data.docIds?.length) {
-    const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
-    for (const docId of data.docIds) {
-      linkStmt.run(jobId, docId);
+    // Merge explicitly selected docs with pinned docs
+    const allDocIds = new Set([...(data.docIds || []), ...listPinnedDocIds()]);
+    if (allDocIds.size > 0) {
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
+      for (const docId of allDocIds) linkStmt.run(jobId, docId);
     }
-  }
 
-  // Create the run immediately with 'scheduled' status
-  db.prepare(`
-    INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, created_at, updated_at)
-    VALUES (?, ?, ?, 'scheduled', ?, ?, ?)
-  `).run(runId, jobId, agentId, runAt, now, now);
+    // Merge explicitly selected env vars with pinned env vars
+    const allEnvVarIds = new Set([...(data.envVarIds || []), ...listPinnedEnvVarIds()]);
+    if (allEnvVarIds.size > 0) {
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
+      for (const envId of allEnvVarIds) linkStmt.run(jobId, envId);
+    }
 
+    // Create the run immediately with 'scheduled' status
+    db.prepare(`
+      INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, created_at, updated_at)
+      VALUES (?, ?, ?, 'scheduled', ?, ?, ?)
+    `).run(runId, jobId, agentId, runAt, now, now);
+  });
+
+  create();
   return { jobId, runId };
 }
 
@@ -170,7 +215,7 @@ export function advanceJobSchedule(jobId: string) {
   const job = db.prepare(`SELECT schedule FROM jobs WHERE id = ?`).get(jobId) as any;
   if (!job?.schedule) return;
 
-  const nextRunAt = getNextRunTime(job.schedule);
+  const nextRunAt = getNextRunTime(job.schedule, undefined, getTimezone());
   if (nextRunAt !== null) {
     db.prepare(`UPDATE jobs SET next_run_at = ?, updated_at = unixepoch() WHERE id = ?`).run(nextRunAt, jobId);
   }

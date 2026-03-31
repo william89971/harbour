@@ -1,33 +1,35 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { FileText, Plus } from "lucide-react";
+import { FileText, Plus, Pin } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 
-type Doc = { id: string; title: string; updated_at: number };
+type Doc = { id: string; title: string; pinned: number; updated_at: number };
 
 export default function DocsPage() {
   const router = useRouter();
-  const [docs, setDocs] = useState<Doc[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
   const [newTitle, setNewTitle] = useState("");
 
-  function loadDocs() {
-    fetch("/api/docs").then(r => r.json()).then(data => {
-      setDocs(Array.isArray(data) ? data : []);
-      setLoading(false);
-    });
-  }
-
-  useEffect(() => { loadDocs(); }, []);
+  const { data: docs = [], isLoading: loading } = useQuery<Doc[]>({
+    queryKey: ["docs"],
+    queryFn: async () => {
+      const res = await fetch("/api/docs");
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
+    refetchInterval: 5000,
+  });
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -41,6 +43,13 @@ export default function DocsPage() {
       const doc = await res.json();
       router.push(`/docs/${doc.id}?edit=1`);
     }
+  }
+
+  async function handleTogglePin(e: React.MouseEvent, docId: string) {
+    e.preventDefault();
+    const res = await fetch(`/api/docs/${docId}/pin`, { method: "POST" });
+    if (!res.ok) return;
+    queryClient.invalidateQueries({ queryKey: ["docs"] });
   }
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
@@ -67,6 +76,13 @@ export default function DocsPage() {
                 <FileText className="h-4 w-4 text-primary" />
               </div>
               <span className="text-sm font-medium flex-1 pt-1">{doc.title}</span>
+              <button
+                onClick={e => handleTogglePin(e, doc.id)}
+                className={`shrink-0 p-1 rounded transition-colors ${doc.pinned ? "text-primary" : "text-muted-foreground/30 hover:text-muted-foreground"}`}
+                title={doc.pinned ? "Unpin" : "Pin to all jobs"}
+              >
+                <Pin className="h-3.5 w-3.5" />
+              </button>
               <span className="text-xs text-muted-foreground pt-1">{timeAgo(doc.updated_at)}</span>
             </Link>
           ))}

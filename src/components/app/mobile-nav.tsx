@@ -12,7 +12,9 @@ import {
   Bot,
   FileText,
   Database,
+  KeyRound,
   Users,
+  Settings,
   MoreHorizontal,
 } from "lucide-react";
 
@@ -31,7 +33,9 @@ export function MobileBottomNav() {
   const moreLinks = [
     { href: "/docs", label: "Docs", icon: FileText },
     { href: "/databases", label: "Databases", icon: Database },
+    { href: "/env-vars", label: "Env Vars", icon: KeyRound },
     { href: "/users", label: "Users", icon: Users },
+    { href: "/settings", label: "Settings", icon: Settings },
   ];
 
   const isMoreActive = moreLinks.some((l) => pathname.startsWith(l.href));

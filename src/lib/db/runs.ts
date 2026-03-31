@@ -1,6 +1,7 @@
 import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
-import { getNextRunTime } from "../schedule";
+import { getDecryptedEnvVarsForJob } from "./env-vars";
+import { advanceJobSchedule } from "./jobs";
 
 export function createRun(jobId: string, agentId: string) {
   const db = getDb();
@@ -34,7 +35,8 @@ export function getRunWithActivity(id: string) {
 export function updateRunStatus(id: string, status: string) {
   const db = getDb();
   const completedAt = (status === "done" || status === "failed" || status === "skipped")
-    ? ", completed_at = unixepoch()" : "";
+    ? ", completed_at = unixepoch()"
+    : ", completed_at = NULL";
   db.prepare(`UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt} WHERE id = ?`).run(status, id);
 
   // Advance the job's next_run_at when a run completes
@@ -46,7 +48,7 @@ export function updateRunStatus(id: string, status: string) {
       if (job?.one_off) {
         db.prepare(`UPDATE jobs SET active = 0, next_run_at = NULL, updated_at = unixepoch() WHERE id = ?`).run(run.job_id);
       } else {
-        advanceSchedule(run.job_id);
+        advanceJobSchedule(run.job_id);
       }
     }
   }
@@ -142,6 +144,39 @@ export function listRunActivity(runId: string) {
   return db.prepare(`SELECT * FROM run_activity WHERE run_id = ? ORDER BY created_at ASC`).all(runId);
 }
 
+// Run output (streaming events from CLI agents)
+
+export type RunOutputEvent = {
+  id?: number;
+  run_id: string;
+  event_type: string;
+  content: string | null;
+  tool_name: string | null;
+  created_at?: number;
+};
+
+export function addRunOutput(runId: string, events: Omit<RunOutputEvent, "run_id" | "id" | "created_at">[]) {
+  const db = getDb();
+  const stmt = db.prepare(`
+    INSERT INTO run_output (run_id, event_type, content, tool_name)
+    VALUES (?, ?, ?, ?)
+  `);
+  const insertMany = db.transaction((evts: typeof events) => {
+    for (const e of evts) {
+      stmt.run(runId, e.event_type, e.content || null, e.tool_name || null);
+    }
+  });
+  insertMany(events);
+  db.prepare(`UPDATE runs SET updated_at = unixepoch() WHERE id = ?`).run(runId);
+}
+
+export function listRunOutput(runId: string, afterId = 0) {
+  const db = getDb();
+  return db.prepare(`
+    SELECT * FROM run_output WHERE run_id = ? AND id > ? ORDER BY id ASC
+  `).all(runId, afterId) as RunOutputEvent[];
+}
+
 // Fail runs that have exceeded their job's timeout
 function failStaleRuns(agentId: string) {
   const db = getDb();
@@ -179,59 +214,66 @@ export function getAgentNextRun(agentId: string) {
   // 0. Fail any stale running runs that exceeded their timeout
   failStaleRuns(agentId);
 
-  // 1. Agent already has a running run? Return nothing (busy)
-  const running = db.prepare(`
-    SELECT id FROM runs WHERE agent_id = ? AND status = 'running' LIMIT 1
-  `).get(agentId) as any;
-  if (running) return null;
+  // Wrap in a transaction so run assignment is atomic
+  const assignRun = db.transaction(() => {
+    // 1. Agent already has a running run? Return nothing (busy)
+    const running = db.prepare(`
+      SELECT id FROM runs WHERE agent_id = ? AND status = 'running' LIMIT 1
+    `).get(agentId) as any;
+    if (running) return null;
 
-  // 2. Pending run? (human responded, ready for agent to resume)
-  const pendingRun = db.prepare(`
-    SELECT id FROM runs
-    WHERE agent_id = ? AND status = 'pending'
-    ORDER BY updated_at ASC LIMIT 1
-  `).get(agentId) as any;
+    // 2. Pending run? (human responded, ready for agent to resume)
+    const pendingRun = db.prepare(`
+      SELECT id FROM runs
+      WHERE agent_id = ? AND status = 'pending'
+      ORDER BY updated_at ASC LIMIT 1
+    `).get(agentId) as any;
 
-  if (pendingRun) {
-    db.prepare(`UPDATE runs SET status = 'running', updated_at = unixepoch() WHERE id = ?`).run(pendingRun.id);
-    return buildRunPayload(pendingRun.id);
-  }
+    if (pendingRun) {
+      db.prepare(`UPDATE runs SET status = 'running', updated_at = unixepoch() WHERE id = ?`).run(pendingRun.id);
+      return pendingRun.id as string;
+    }
 
-  const now = Math.floor(Date.now() / 1000);
+    const now = Math.floor(Date.now() / 1000);
 
-  // 3. Scheduled run ready to start? (one-off runs created via dashboard)
-  const scheduledRun = db.prepare(`
-    SELECT id FROM runs
-    WHERE agent_id = ? AND status = 'scheduled' AND scheduled_for <= ?
-    ORDER BY scheduled_for ASC LIMIT 1
-  `).get(agentId, now) as any;
+    // 3. Scheduled run ready to start? (one-off runs created via dashboard)
+    const scheduledRun = db.prepare(`
+      SELECT id FROM runs
+      WHERE agent_id = ? AND status = 'scheduled' AND scheduled_for <= ?
+      ORDER BY scheduled_for ASC LIMIT 1
+    `).get(agentId, now) as any;
 
-  if (scheduledRun) {
-    db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(scheduledRun.id);
-    db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`).run(scheduledRun.id);
-    return buildRunPayload(scheduledRun.id);
-  }
+    if (scheduledRun) {
+      db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(scheduledRun.id);
+      db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`).run(scheduledRun.id);
+      return scheduledRun.id as string;
+    }
 
-  // 4. Any recurring job past its schedule time without an active run?
-  const readyJob = db.prepare(`
-    SELECT j.id, j.agent_id FROM jobs j
-    WHERE j.agent_id = ? AND j.active = 1 AND j.one_off = 0
-    AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
-    AND NOT EXISTS (
-      SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending')
-    )
-    ORDER BY j.next_run_at ASC LIMIT 1
-  `).get(agentId, now) as any;
+    // 4. Any recurring job past its schedule time without an active run?
+    const readyJob = db.prepare(`
+      SELECT j.id, j.agent_id FROM jobs j
+      WHERE j.agent_id = ? AND j.active = 1 AND j.one_off = 0
+      AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
+      AND NOT EXISTS (
+        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending')
+      )
+      ORDER BY j.next_run_at ASC LIMIT 1
+    `).get(agentId, now) as any;
 
-  if (readyJob) {
-    const run = createRun(readyJob.id, agentId);
-    db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(readyJob.id);
-    // Advance next_run_at immediately so the job doesn't re-fire on the next poll
-    advanceSchedule(readyJob.id);
-    return buildRunPayload(run!.id);
-  }
+    if (readyJob) {
+      const run = createRun(readyJob.id, agentId);
+      db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(readyJob.id);
+      // Advance next_run_at immediately so the job doesn't re-fire on the next poll
+      advanceJobSchedule(readyJob.id);
+      return run!.id as string;
+    }
 
-  return null;
+    return null;
+  });
+
+  const runId = assignRun();
+  if (!runId) return null;
+  return buildRunPayload(runId);
 }
 
 export function peekAgentNext(agentId: string) {
@@ -316,6 +358,9 @@ function buildRunPayload(runId: string) {
     ).all();
   }
 
+  // Decrypt env vars for this job
+  const env = getDecryptedEnvVarsForJob(run.job_id);
+
   return {
     run: { id: run.id, status: run.status, activity: run.activity },
     job: {
@@ -323,19 +368,12 @@ function buildRunPayload(runId: string) {
       name: job.name,
       instructions: job.instructions,
       check: job.check_command,
+      model: job.model || null,
+      thinking: job.thinking || null,
     },
     docs,
     data,
+    env,
   };
 }
 
-// Advance a job's next_run_at. Defined here to avoid circular import with jobs.ts.
-function advanceSchedule(jobId: string) {
-  const db = getDb();
-  const job = db.prepare(`SELECT schedule FROM jobs WHERE id = ?`).get(jobId) as any;
-  if (!job?.schedule) return;
-  const nextRunAt = getNextRunTime(job.schedule);
-  if (nextRunAt !== null) {
-    db.prepare(`UPDATE jobs SET next_run_at = ?, updated_at = unixepoch() WHERE id = ?`).run(nextRunAt, jobId);
-  }
-}

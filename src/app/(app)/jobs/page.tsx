@@ -1,17 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { SchedulePicker, parseSchedule, serializeSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import { Plus, Briefcase, Bot, Calendar } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
+import { CreateDialog } from "@/components/app/create-dialog";
+import { formatSchedule, parseSchedule } from "@/components/app/schedule-picker";
 
 type Job = {
   id: string; agent_id: string; agent_name: string; name: string;
@@ -20,60 +18,18 @@ type Job = {
   last_run_at: number | null; check_command: string | null;
 };
 
-type Agent = { id: string; name: string };
-
 export default function JobsPage() {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // Create dialog
   const [showCreate, setShowCreate] = useState(false);
-  const [agentId, setAgentId] = useState("");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [instructions, setInstructions] = useState("");
-  const [schedule, setSchedule] = useState(parseSchedule(null));
-  const [checkCommand, setCheckCommand] = useState("");
 
-  async function loadAll() {
-    const [jobsRes, agentsRes] = await Promise.all([
-      fetch("/api/jobs"),
-      fetch("/api/agents"),
-    ]);
-    if (jobsRes.ok) setJobs(await jobsRes.json());
-    if (agentsRes.ok) {
-      const data = await agentsRes.json();
-      setAgents(data);
-      if (data.length > 0 && !agentId) setAgentId(data[0].id);
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => { loadAll(); }, []);
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim() || !agentId) return;
-    await fetch(`/api/agents/${agentId}/jobs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name,
-        description: description || undefined,
-        instructions: instructions || undefined,
-        schedule: serializeSchedule(schedule),
-        checkCommand: checkCommand || undefined,
-      }),
-    });
-    setShowCreate(false);
-    setName("");
-    setDescription("");
-    setInstructions("");
-    setSchedule(parseSchedule(null));
-    setCheckCommand("");
-    loadAll();
-  }
+  const { data: jobs = [], isLoading: loading } = useQuery<Job[]>({
+    queryKey: ["jobs"],
+    queryFn: async () => {
+      const res = await fetch("/api/jobs");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
 
@@ -84,7 +40,7 @@ export default function JobsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
           <p className="text-sm text-muted-foreground mt-1">Recurring work across all agents.</p>
         </div>
-        <Button onClick={() => setShowCreate(true)} size="sm" disabled={agents.length === 0}>
+        <Button onClick={() => setShowCreate(true)} size="sm">
           <Plus className="h-4 w-4 mr-1.5" /> New Job
         </Button>
       </div>
@@ -125,50 +81,7 @@ export default function JobsPage() {
         </div>
       )}
 
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>New Job</DialogTitle></DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Agent</Label>
-              <select
-                value={agentId}
-                onChange={e => setAgentId(e.target.value)}
-                className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-              >
-                {agents.map(a => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Morning Tweet" autoFocus required />
-            </div>
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief description" />
-            </div>
-            <div className="space-y-2">
-              <Label>Instructions</Label>
-              <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="What should the agent do?" rows={4} className="max-h-[30vh]" />
-            </div>
-            <div className="space-y-2">
-              <Label>Schedule</Label>
-              <SchedulePicker schedule={schedule} onChange={setSchedule} />
-            </div>
-            <div className="space-y-2">
-              <Label>Pre-run Check (optional)</Label>
-              <Input value={checkCommand} onChange={e => setCheckCommand(e.target.value)} placeholder="e.g. python3 checks/new_videos.py" className="font-mono text-xs" />
-              <p className="text-xs text-muted-foreground">Shell command run before the LLM. Exit 0 = proceed, non-zero = skip.</p>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setShowCreate(false)}>Cancel</Button>
-              <Button type="submit">Create Job</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <CreateDialog open={showCreate} onOpenChange={setShowCreate} defaultTab="job" />
     </div>
   );
 }

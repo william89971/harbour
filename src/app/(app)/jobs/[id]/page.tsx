@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SectionHeader } from "@/components/app/section-header";
@@ -12,20 +13,24 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
+import { useApp } from "@/components/app/app-context";
 import { SchedulePicker, parseSchedule, serializeSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
-  Settings, Trash2, X, Plus,
-  FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock,
+  Settings, Trash2, X, Plus, Pin,
+  FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock, Cpu, KeyRound,
 } from "lucide-react";
+import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { timeAgo, formatTimestamp } from "@/lib/time";
 import { StatusDot } from "@/components/app/run-status";
 
 type Job = {
   id: string; agent_id: string; agent_name: string; name: string; description: string | null;
   instructions: string | null; schedule: string; check_command: string | null; timeout_minutes: number;
+  model: string | null; thinking: string | null;
   active: number; last_run_at: number | null; next_run_at: number | null;
   docs: { id: string; title: string }[];
   databases: { id: string; name: string; table_name: string }[];
+  envVars: { id: string; name: string }[];
 };
 type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
@@ -54,68 +59,92 @@ function InstructionsBlock({ text }: { text: string }) {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const [job, setJob] = useState<Job | null>(null);
-  const [runs, setRuns] = useState<Run[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [allDocs, setAllDocs] = useState<{ id: string; title: string }[]>([]);
+  const queryClient = useQueryClient();
+  const { timezone } = useApp();
+
+  const { data: job = null, isLoading: loading } = useQuery<Job | null>({
+    queryKey: ["jobs", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/jobs/${id}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: agent = null } = useQuery({
+    queryKey: ["agents", job?.agent_id],
+    queryFn: async () => {
+      if (!job?.agent_id) return null;
+      const res = await fetch(`/api/agents/${job.agent_id}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!job?.agent_id,
+  });
+
+  const { data: recentRunsData = [] } = useQuery({
+    queryKey: ["runs", "recent"],
+    queryFn: async () => {
+      const res = await fetch("/api/runs?filter=recent");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: waitingRunsData = [] } = useQuery({
+    queryKey: ["runs", "waiting"],
+    queryFn: async () => {
+      const res = await fetch("/api/runs?filter=waiting");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: allDocs = [] } = useQuery<{ id: string; title: string; pinned: number }[]>({
+    queryKey: ["docs"],
+    queryFn: async () => {
+      const res = await fetch("/api/docs");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: allEnvVars = [] } = useQuery<{ id: string; name: string; pinned: number }[]>({
+    queryKey: ["env-vars"],
+    queryFn: async () => {
+      const res = await fetch("/api/env-vars");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const recentArr = Array.isArray(recentRunsData) ? recentRunsData : [];
+  const waitingArr = Array.isArray(waitingRunsData) ? waitingRunsData : [];
+  const specificRuns = [
+    ...waitingArr.filter((r: any) => r.job_id === id),
+    ...recentArr.filter((r: any) => r.job_id === id),
+  ];
+
   const [showEdit, setShowEdit] = useState(false);
+  const [showDocs, setShowDocs] = useState(false);
+  const [showEnvVars, setShowEnvVars] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editInstructions, setEditInstructions] = useState("");
   const [editSchedule, setEditSchedule] = useState(parseSchedule(null));
   const [editCheck, setEditCheck] = useState("");
   const [editTimeout, setEditTimeout] = useState(30);
-
-  const loadAll = useCallback(async () => {
-    const [jobRes, runsRes, docsRes] = await Promise.all([
-      fetch(`/api/jobs/${id}`),
-      fetch(`/api/runs?filter=recent`),
-      fetch(`/api/docs`),
-    ]);
-    if (jobRes.ok) {
-      const j = await jobRes.json();
-      setJob(j);
-      setEditName(j.name);
-      setEditDesc(j.description || "");
-      setEditInstructions(j.instructions || "");
-      setEditSchedule(parseSchedule(j.schedule));
-      setEditCheck(j.check_command || "");
-      setEditTimeout(j.timeout_minutes ?? 30);
-    }
-    if (runsRes.ok) {
-      const allRuns = await runsRes.json();
-      setRuns(Array.isArray(allRuns) ? allRuns : []);
-    }
-    if (docsRes.ok) {
-      setAllDocs(await docsRes.json());
-    }
-    setLoading(false);
-  }, [id]);
-
-  useEffect(() => { loadAll(); }, [loadAll]);
-
-  // Also load runs by this job specifically
-  const jobRuns = runs; // We'll fetch job-specific runs below
-  const [specificRuns, setSpecificRuns] = useState<Run[]>([]);
-
-  useEffect(() => {
-    if (!job) return;
-    // Get all recent runs and filter
-    fetch("/api/runs?filter=recent").then(r => r.json()).then(data => {
-      const arr = Array.isArray(data) ? data : [];
-      setSpecificRuns(arr.filter((r: any) => r.job_id === id));
-    });
-    // Also get waiting runs
-    fetch("/api/runs?filter=waiting").then(r => r.json()).then(data => {
-      const arr = Array.isArray(data) ? data : [];
-      const waiting = arr.filter((r: any) => r.job_id === id);
-      setSpecificRuns(prev => [...waiting, ...prev]);
-    });
-  }, [job, id]);
+  const [editModel, setEditModel] = useState("");
+  const [editThinking, setEditThinking] = useState("");
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
-    await fetch(`/api/jobs/${id}`, {
+    const res = await fetch(`/api/jobs/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -125,39 +154,62 @@ export default function JobDetailPage() {
         schedule: serializeSchedule(editSchedule),
         checkCommand: editCheck || undefined,
         timeoutMinutes: editTimeout,
+        model: editModel || "",
+        thinking: editThinking || "",
       }),
     });
+    if (!res.ok) { alert("Failed to update job"); return; }
     setShowEdit(false);
-    loadAll();
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleToggleActive() {
     if (!job) return;
-    await fetch(`/api/jobs/${id}`, {
+    const res = await fetch(`/api/jobs/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ active: !job.active }),
     });
-    loadAll();
+    if (!res.ok) { alert("Failed to update job"); return; }
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleLinkDoc(docId: string) {
-    await fetch(`/api/jobs/${id}/docs`, {
+    const res = await fetch(`/api/jobs/${id}/docs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ docId }),
     });
-    loadAll();
+    if (!res.ok) { alert("Failed to link doc"); return; }
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleUnlinkDoc(docId: string) {
-    await fetch(`/api/jobs/${id}/docs/${docId}`, { method: "DELETE" });
-    loadAll();
+    const res = await fetch(`/api/jobs/${id}/docs/${docId}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to unlink doc"); return; }
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
+  }
+
+  async function handleLinkEnvVar(envVarId: string) {
+    const res = await fetch(`/api/jobs/${id}/env-vars`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ envVarId }),
+    });
+    if (!res.ok) { alert("Failed to link env var"); return; }
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
+  }
+
+  async function handleUnlinkEnvVar(envVarId: string) {
+    const res = await fetch(`/api/jobs/${id}/env-vars/${envVarId}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to unlink env var"); return; }
+    queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
   async function handleDelete() {
     if (!confirm(`Delete "${job?.name}"? All run history will be lost.`)) return;
-    await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+    if (!res.ok) { alert("Failed to delete job"); return; }
     router.push(`/agents/${job?.agent_id}`);
   }
 
@@ -180,7 +232,7 @@ export default function JobDetailPage() {
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleToggleActive} title={job.active ? "Pause" : "Resume"}>
             {job.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowEdit(true)} title="Edit">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditCheck(job.check_command || ""); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); } setShowEdit(true); }} title="Edit">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -191,6 +243,12 @@ export default function JobDetailPage() {
           <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <Link href={`/agents/${job.agent_id}`} className="text-muted-foreground hover:text-foreground transition-colors truncate">{job.agent_name}</Link>
         </div>
+        {(job.model || job.thinking) && (
+          <div className="flex items-center gap-2 text-sm">
+            <Cpu className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground truncate">{[job.model, job.thinking].filter(Boolean).join(" · ")}</span>
+          </div>
+        )}
         <div className="flex items-center gap-2 text-sm">
           <Calendar className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-muted-foreground truncate">{formatSchedule(parseSchedule(job.schedule))}</span>
@@ -201,7 +259,7 @@ export default function JobDetailPage() {
         </div>
         <div className="flex items-center gap-2 text-sm">
           <CalendarClock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span className="text-muted-foreground truncate">{formatTimestamp(job.next_run_at) || "—"}</span>
+          <span className="text-muted-foreground truncate">{formatTimestamp(job.next_run_at, timezone) || "—"}</span>
         </div>
       </div>
 
@@ -214,48 +272,80 @@ export default function JobDetailPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider">Docs</p>
-          {job.docs.length > 0 ? job.docs.map(d => (
-            <div key={d.id} className="flex items-center gap-2 group">
-              <Link href={`/docs/${d.id}`} className="flex items-center gap-2 text-sm hover:text-primary transition-colors flex-1 min-w-0">
-                <FileText className="h-3.5 w-3.5 shrink-0" /> <span className="truncate">{d.title}</span>
-              </Link>
-              <button onClick={() => handleUnlinkDoc(d.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all" title="Remove">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )) : (
-            <p className="text-sm text-muted-foreground">None</p>
-          )}
-          {(() => {
-            const linkedIds = new Set(job.docs.map(d => d.id));
-            const available = allDocs.filter(d => !linkedIds.has(d.id));
-            if (available.length === 0) return null;
-            return (
-              <select
-                className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm text-muted-foreground"
-                value=""
-                onChange={e => { if (e.target.value) handleLinkDoc(e.target.value); }}
-              >
-                <option value="">Add doc…</option>
-                {available.map(d => <option key={d.id} value={d.id}>{d.title}</option>)}
-              </select>
-            );
-          })()}
+      {/* Docs */}
+      <section>
+        <div className="flex items-center justify-between mb-2">
+          <SectionHeader>Docs</SectionHeader>
+          <Button variant="outline" size="sm" onClick={() => setShowDocs(true)}>
+            <Plus className="h-3.5 w-3.5 mr-1" /> Add
+          </Button>
         </div>
-        {job.databases.length > 0 && (
+        {job.docs.length === 0 ? (
+          <EmptyState>No docs linked to this job.</EmptyState>
+        ) : (
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Databases</p>
-            {job.databases.map(d => (
-              <Link key={d.id} href={`/databases/${d.id}`} className="flex items-center gap-2 text-sm font-mono hover:text-primary transition-colors">
-                <Database className="h-3.5 w-3.5" /> {d.name}
-              </Link>
+            {job.docs.map(d => (
+              <div key={d.id} className="flex items-center gap-3 rounded-lg border p-3 group">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <FileText className="h-4 w-4 text-primary" />
+                </div>
+                <Link href={`/docs/${d.id}`} className="text-sm font-medium flex-1 min-w-0 truncate hover:text-primary transition-colors">
+                  {d.title}
+                </Link>
+                <button onClick={() => handleUnlinkDoc(d.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all shrink-0" title="Remove">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ))}
           </div>
         )}
-      </div>
+      </section>
+
+      {/* Databases */}
+      {job.databases.length > 0 && (
+        <section>
+          <SectionHeader>Databases</SectionHeader>
+          <div className="space-y-2">
+            {job.databases.map(d => (
+              <Link key={d.id} href={`/databases/${d.id}`} className="flex items-center gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <Database className="h-4 w-4 text-primary" />
+                </div>
+                <span className="text-sm font-mono font-medium">{d.name}</span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Env Vars */}
+      <section>
+        <div className="flex items-center justify-between mb-2">
+          <SectionHeader>Env Vars</SectionHeader>
+          <Button variant="outline" size="sm" onClick={() => setShowEnvVars(true)}>
+            <Plus className="h-3.5 w-3.5 mr-1" /> Add
+          </Button>
+        </div>
+        {job.envVars.length === 0 ? (
+          <EmptyState>No env vars linked to this job.</EmptyState>
+        ) : (
+          <div className="space-y-2">
+            {job.envVars.map(ev => (
+              <div key={ev.id} className="flex items-center gap-3 rounded-lg border p-3 group">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <KeyRound className="h-4 w-4 text-primary" />
+                </div>
+                <Link href={`/env-vars/${ev.id}`} className="text-sm font-mono font-medium flex-1 min-w-0 truncate hover:text-primary transition-colors">
+                  {ev.name}
+                </Link>
+                <button onClick={() => handleUnlinkEnvVar(ev.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all shrink-0" title="Remove">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Run History */}
       <div className="space-y-3">
@@ -274,6 +364,74 @@ export default function JobDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Add Docs Dialog */}
+      <Dialog open={showDocs} onOpenChange={setShowDocs}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add Docs</DialogTitle></DialogHeader>
+          {(() => {
+            const linkedIds = new Set(job.docs.map(d => d.id));
+            const available = allDocs.filter(d => !linkedIds.has(d.id));
+            if (available.length === 0) {
+              return <p className="text-sm text-muted-foreground py-4 text-center">All docs are already linked to this job.</p>;
+            }
+            return (
+              <div className="space-y-1 max-h-80 overflow-y-auto">
+                {available.map(d => (
+                  <button
+                    key={d.id}
+                    onClick={async () => { await handleLinkDoc(d.id); }}
+                    className="flex items-center gap-3 w-full rounded-lg p-2.5 text-left hover:bg-accent/50 transition-colors"
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <FileText className="h-4 w-4 text-primary" />
+                    </div>
+                    <span className="text-sm font-medium flex-1 min-w-0 truncate">{d.title}</span>
+                    {d.pinned === 1 && <Pin className="h-3 w-3 text-muted-foreground shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowDocs(false)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Env Vars Dialog */}
+      <Dialog open={showEnvVars} onOpenChange={setShowEnvVars}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add Env Vars</DialogTitle></DialogHeader>
+          {(() => {
+            const linkedIds = new Set(job.envVars.map(ev => ev.id));
+            const available = allEnvVars.filter(ev => !linkedIds.has(ev.id));
+            if (available.length === 0) {
+              return <p className="text-sm text-muted-foreground py-4 text-center">All env vars are already linked to this job.</p>;
+            }
+            return (
+              <div className="space-y-1 max-h-80 overflow-y-auto">
+                {available.map(ev => (
+                  <button
+                    key={ev.id}
+                    onClick={async () => { await handleLinkEnvVar(ev.id); }}
+                    className="flex items-center gap-3 w-full rounded-lg p-2.5 text-left hover:bg-accent/50 transition-colors"
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <KeyRound className="h-4 w-4 text-primary" />
+                    </div>
+                    <span className="text-sm font-mono font-medium flex-1 min-w-0 truncate">{ev.name}</span>
+                    {ev.pinned === 1 && <Pin className="h-3 w-3 text-muted-foreground shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowEnvVars(false)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Dialog */}
       <Dialog open={showEdit} onOpenChange={setShowEdit}>
@@ -304,6 +462,17 @@ export default function JobDetailPage() {
               <Label>Timeout (minutes)</Label>
               <Input type="number" min={1} value={editTimeout} onChange={e => setEditTimeout(parseInt(e.target.value) || 30)} />
             </div>
+            {agent?.type === "harbour" && agent.cli && (
+              <ModelThinkingSelect
+                cli={agent.cli}
+                model={editModel}
+                thinking={editThinking}
+                onModelChange={setEditModel}
+                onThinkingChange={setEditThinking}
+                defaultModelLabel={`Agent default${agent.model ? ` (${agent.model})` : ""}`}
+                defaultThinkingLabel={`Agent default${agent.thinking ? ` (${agent.thinking})` : ""}`}
+              />
+            )}
             <DialogFooter>
               <Button type="button" variant="destructive" onClick={handleDelete} className="mr-auto"><Trash2 className="h-4 w-4 mr-1" /> Delete</Button>
               <Button type="button" variant="ghost" onClick={() => setShowEdit(false)}>Cancel</Button>

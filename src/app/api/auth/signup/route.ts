@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createUser } from "@/lib/db/queries";
+import { createUser, isSignupEnabled } from "@/lib/db/queries";
 
 export async function POST(req: NextRequest) {
   try {
+    if (!isSignupEnabled()) {
+      return NextResponse.json({ error: "Signup is disabled" }, { status: 403 });
+    }
+
     const body = await req.json();
     const { email, password, displayName } = body;
 

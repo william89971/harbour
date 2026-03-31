@@ -4,19 +4,22 @@ This document covers everything an agent needs to work with Harbour. It is serve
 
 ## Overview
 
-Harbour is a control plane that manages your recurring jobs, shared docs, and data stores. It doesn't control how you do your work — it tells you *what* to do, *when*, and gives you the context to do it.
+Harbour is a control plane that manages your recurring jobs, shared docs, data stores, and encrypted environment variables. It doesn't control how you do your work — it tells you *what* to do, *when*, and gives you the context to do it.
 
-You poll for work. Harbour returns a job with instructions, referenced docs, and database rows. You do the work, log your activity, and mark it done — or set it to "waiting" if you need human input. Humans respond on the dashboard, and your next poll picks it up. You can also create and update shared docs and manage structured data through the API.
+You poll for work. Harbour returns a job with instructions, referenced docs, database rows, and env vars. You do the work, log your activity, and mark it done — or set it to "waiting" if you need human input. Humans respond on the dashboard, and your next poll picks it up. You can also create and update shared docs and manage structured data through the API.
 
 Key concepts:
-- **Jobs** — recurring responsibilities with a schedule, instructions, and linked docs/data
+- **Jobs** — recurring responsibilities with a schedule, instructions, and linked docs/data/env vars
 - **Runs** — a single execution of a job, with an activity log of agent and human messages
 - **Docs** — shared markdown documents, injected into runs automatically
 - **Databases** — SQLite tables you create and manage, injected into runs automatically
+- **Env Vars** — encrypted key-value pairs (API keys, tokens), decrypted and injected at runtime
 
 ## Scheduling
 
 Jobs use the `schedule` field to define when they run. Harbour automatically computes `next_run_at` when a job is created, and advances it each time a run completes (status changes to `done`, `failed`, or `skipped`). You don't need to manage `next_run_at` yourself.
+
+All schedule times use the system timezone configured in Settings (auto-detected from the server on first run).
 
 **Choose the right schedule type for the job.** Most agent jobs should use short intervals (every few minutes), not weekly schedules. Use weekly/daily only for jobs that genuinely run on a calendar cadence (e.g. a weekly newsletter). For monitoring, triage, content posting, and most recurring work, use an interval.
 
@@ -93,7 +96,9 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     "id": "uuid",
     "name": "Morning Tweet",
     "instructions": "Write an engaging tweet about...",
-    "check": "python3 checks/new_content.py"
+    "check": "python3 checks/new_content.py",
+    "model": null,
+    "thinking": null
   },
   "docs": [
     { "id": "uuid", "title": "Brand Voice", "content": "..." }
@@ -101,11 +106,36 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
   "data": {
     "metrics": [{ "_id": 1, "followers": 12400, "engagement_rate": 3.2 }],
     "tweet_history": [{ "_id": 5, "date": "2024-03-01", "text": "...", "impressions": 340 }]
+  },
+  "env": {
+    "GITHUB_TOKEN": "ghp_...",
+    "FIGMA_API_KEY": "figd_..."
+  },
+  "api": {
+    "base_url": "https://your-harbour.example.com",
+    "endpoints": {
+      "update_status": "PUT https://your-harbour.example.com/api/runs/<run_id>/status",
+      "post_activity": "POST https://your-harbour.example.com/api/runs/<run_id>/activity",
+      "create_doc": "POST https://your-harbour.example.com/api/docs",
+      "update_doc": "PUT https://your-harbour.example.com/api/docs/:id",
+      "create_database": "POST https://your-harbour.example.com/api/databases",
+      "insert_rows": "POST https://your-harbour.example.com/api/databases/:id/rows",
+      "read_rows": "GET https://your-harbour.example.com/api/databases/:id/rows",
+      "guide": "GET https://your-harbour.example.com/api/guide"
+    },
+    "status_options": ["done", "failed", "waiting"],
+    "notes": [
+      "You MUST set a final status (done/failed) when finished, or waiting if you need human input.",
+      "Post activity messages to log progress — these are visible on the dashboard.",
+      "Full API spec available at the guide endpoint."
+    ]
   }
 }
 ```
 
-Everything the agent needs is bundled in one response: the run, job instructions, referenced docs, and linked database rows (most recent 100 per table).
+Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides), referenced docs, linked database rows (most recent 100 per table), decrypted env vars, and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, and manage docs and databases — no need to construct URLs yourself.
+
+The `env` field contains decrypted environment variables linked to the job. Use these for API keys, tokens, and other credentials needed during the run.
 
 ### Peek (Read-Only Check)
 
@@ -148,6 +178,8 @@ Valid statuses:
 - `skipped` — pre-run check determined nothing to do
 
 When a run transitions to `done`, `failed`, or `skipped`, Harbour automatically advances the job's `next_run_at` to the next scheduled time. No manual schedule management needed.
+
+**Retrying:** Failed and skipped runs can be retried from the dashboard via `POST /api/runs/:id/retry`. The run goes back to `pending` with a system activity note, and the agent picks it up on next poll.
 
 **Timeouts:** Each job has a configurable `timeout_minutes` (default 30). If a run stays in `running` status longer than the timeout with no activity updates, it is automatically failed on the next poll with a system message. This prevents stuck runs from blocking the agent.
 
@@ -272,7 +304,7 @@ Content-Type: application/json
 
 ## Docs
 
-Docs are top-level resources linked to jobs. When a job fires, all its linked docs are included in the `/next` payload automatically. Agents can also create and update docs:
+Docs are top-level resources linked to jobs. When a job fires, all its linked docs are included in the `/next` payload automatically. Pinned docs are auto-attached to all new jobs and one-off runs. Agents can also create and update docs:
 
 ### Create a Doc
 

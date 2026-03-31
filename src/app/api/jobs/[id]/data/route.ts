@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthFromRequest, requireAuth } from "@/lib/auth";
+import { withAuth } from "@/lib/auth";
 import { getJobById, linkDatabaseToJob } from "@/lib/db/queries";
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await getAuthFromRequest(req);
-  const authError = requireAuth(auth);
-  if (authError) return authError;
-
+export const POST = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
   const job = getJobById(id);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
@@ -16,4 +12,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   linkDatabaseToJob(id, body.databaseId);
   return NextResponse.json({ ok: true }, { status: 201 });
-}
+});
