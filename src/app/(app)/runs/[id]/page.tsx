@@ -11,7 +11,7 @@ import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
-import { Bot, User, Cog, Send, Play, CheckCheck, Terminal } from "lucide-react";
+import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { StatusBadge } from "@/components/app/run-status";
 
@@ -204,6 +204,7 @@ export default function RunDetailPage() {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   const { data: run = null, isLoading: loading } = useQuery<Run | null>({
     queryKey: ["runs", id],
@@ -231,6 +232,13 @@ export default function RunDetailPage() {
     setSending(false);
   }
 
+  async function handleRetry() {
+    setRetrying(true);
+    const res = await fetch(`/api/runs/${id}/retry`, { method: "POST" });
+    if (res.ok) queryClient.invalidateQueries({ queryKey: ["runs", id] });
+    setRetrying(false);
+  }
+
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
   if (!run) return <div className="text-sm text-muted-foreground py-12 text-center">Run not found.</div>;
 
@@ -243,11 +251,18 @@ export default function RunDetailPage() {
           <h1 className="text-xl font-semibold tracking-tight">{run.job_name}</h1>
           <StatusBadge status={run.status} />
         </div>
-        {!run.one_off && (
-          <Link href={`/jobs/${run.job_id}`}>
-            <Button variant="outline" size="sm">View Job</Button>
-          </Link>
-        )}
+        <div className="flex items-center gap-2">
+          {(run.status === "failed" || run.status === "skipped") && (
+            <Button variant="outline" size="sm" onClick={handleRetry} disabled={retrying}>
+              <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> {retrying ? "Retrying..." : "Retry"}
+            </Button>
+          )}
+          {!run.one_off && (
+            <Link href={`/jobs/${run.job_id}`}>
+              <Button variant="outline" size="sm">View Job</Button>
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-3 gap-x-4 rounded-lg border p-3">

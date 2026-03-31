@@ -34,7 +34,8 @@ export function getRunWithActivity(id: string) {
 export function updateRunStatus(id: string, status: string) {
   const db = getDb();
   const completedAt = (status === "done" || status === "failed" || status === "skipped")
-    ? ", completed_at = unixepoch()" : "";
+    ? ", completed_at = unixepoch()"
+    : ", completed_at = NULL";
   db.prepare(`UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt} WHERE id = ?`).run(status, id);
 
   // Advance the job's next_run_at when a run completes
