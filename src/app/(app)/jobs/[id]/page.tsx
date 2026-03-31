@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
 import { SchedulePicker, parseSchedule, serializeSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
-  Settings, Trash2, X, Plus,
+  Settings, Trash2, X, Plus, Pin,
   FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock, Cpu,
 } from "lucide-react";
 import { CLI_CONFIG } from "@/lib/cli-config";
@@ -100,7 +100,7 @@ export default function JobDetailPage() {
     refetchInterval: 5000,
   });
 
-  const { data: allDocs = [] } = useQuery<{ id: string; title: string }[]>({
+  const { data: allDocs = [] } = useQuery<{ id: string; title: string; pinned: number }[]>({
     queryKey: ["docs"],
     queryFn: async () => {
       const res = await fetch("/api/docs");
@@ -118,6 +118,7 @@ export default function JobDetailPage() {
   ];
 
   const [showEdit, setShowEdit] = useState(false);
+  const [showDocs, setShowDocs] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editInstructions, setEditInstructions] = useState("");
@@ -236,48 +237,51 @@ export default function JobDetailPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider">Docs</p>
-          {job.docs.length > 0 ? job.docs.map(d => (
-            <div key={d.id} className="flex items-center gap-2 group">
-              <Link href={`/docs/${d.id}`} className="flex items-center gap-2 text-sm hover:text-primary transition-colors flex-1 min-w-0">
-                <FileText className="h-3.5 w-3.5 shrink-0" /> <span className="truncate">{d.title}</span>
-              </Link>
-              <button onClick={() => handleUnlinkDoc(d.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all" title="Remove">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )) : (
-            <p className="text-sm text-muted-foreground">None</p>
-          )}
-          {(() => {
-            const linkedIds = new Set(job.docs.map(d => d.id));
-            const available = allDocs.filter(d => !linkedIds.has(d.id));
-            if (available.length === 0) return null;
-            return (
-              <select
-                className="w-full rounded-md border bg-transparent px-2 py-1.5 text-sm text-muted-foreground"
-                value=""
-                onChange={e => { if (e.target.value) handleLinkDoc(e.target.value); }}
-              >
-                <option value="">Add doc…</option>
-                {available.map(d => <option key={d.id} value={d.id}>{d.title}</option>)}
-              </select>
-            );
-          })()}
+      {/* Docs */}
+      <section>
+        <div className="flex items-center justify-between mb-2">
+          <SectionHeader>Docs</SectionHeader>
+          <Button variant="outline" size="sm" onClick={() => setShowDocs(true)}>
+            <Plus className="h-3.5 w-3.5 mr-1" /> Add
+          </Button>
         </div>
-        {job.databases.length > 0 && (
+        {job.docs.length === 0 ? (
+          <EmptyState>No docs linked to this job.</EmptyState>
+        ) : (
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Databases</p>
-            {job.databases.map(d => (
-              <Link key={d.id} href={`/databases/${d.id}`} className="flex items-center gap-2 text-sm font-mono hover:text-primary transition-colors">
-                <Database className="h-3.5 w-3.5" /> {d.name}
-              </Link>
+            {job.docs.map(d => (
+              <div key={d.id} className="flex items-center gap-3 rounded-lg border p-3 group">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <FileText className="h-4 w-4 text-primary" />
+                </div>
+                <Link href={`/docs/${d.id}`} className="text-sm font-medium flex-1 min-w-0 truncate hover:text-primary transition-colors">
+                  {d.title}
+                </Link>
+                <button onClick={() => handleUnlinkDoc(d.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all shrink-0" title="Remove">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ))}
           </div>
         )}
-      </div>
+      </section>
+
+      {/* Databases */}
+      {job.databases.length > 0 && (
+        <section>
+          <SectionHeader>Databases</SectionHeader>
+          <div className="space-y-2">
+            {job.databases.map(d => (
+              <Link key={d.id} href={`/databases/${d.id}`} className="flex items-center gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <Database className="h-4 w-4 text-primary" />
+                </div>
+                <span className="text-sm font-mono font-medium">{d.name}</span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Run History */}
       <div className="space-y-3">
@@ -296,6 +300,40 @@ export default function JobDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Add Docs Dialog */}
+      <Dialog open={showDocs} onOpenChange={setShowDocs}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add Docs</DialogTitle></DialogHeader>
+          {(() => {
+            const linkedIds = new Set(job.docs.map(d => d.id));
+            const available = allDocs.filter(d => !linkedIds.has(d.id));
+            if (available.length === 0) {
+              return <p className="text-sm text-muted-foreground py-4 text-center">All docs are already linked to this job.</p>;
+            }
+            return (
+              <div className="space-y-1 max-h-80 overflow-y-auto">
+                {available.map(d => (
+                  <button
+                    key={d.id}
+                    onClick={async () => { await handleLinkDoc(d.id); }}
+                    className="flex items-center gap-3 w-full rounded-lg p-2.5 text-left hover:bg-accent/50 transition-colors"
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <FileText className="h-4 w-4 text-primary" />
+                    </div>
+                    <span className="text-sm font-medium flex-1 min-w-0 truncate">{d.title}</span>
+                    {d.pinned === 1 && <Pin className="h-3 w-3 text-muted-foreground shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowDocs(false)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Dialog */}
       <Dialog open={showEdit} onOpenChange={setShowEdit}>
