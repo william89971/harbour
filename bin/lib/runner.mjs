@@ -201,10 +201,12 @@ async function runSingleAgent(runner) {
     }
   }
 
-  // Execute CLI tool with streaming
+  // Execute CLI tool with streaming (use per-job timeout, fallback to 30 min)
+  const timeoutMinutes = payload.job?.timeout_minutes || 30;
+  const timeoutMs = timeoutMinutes * 60 * 1000;
   let result;
   try {
-    result = await runCliTool(cmd.binary, cmd.args, cmd.cwd, { onLine });
+    result = await runCliTool(cmd.binary, cmd.args, cmd.cwd, { timeoutMs, onLine });
   } catch (err) {
     console.error(`  [${agentName}] CLI execution failed: ${err.message}`);
     try {
@@ -231,12 +233,42 @@ async function runSingleAgent(runner) {
   // Check if CLI exited with error
   if (result.code !== 0) {
     console.error(`  [${agentName}] CLI exited with code ${result.code}`);
-    // Include stderr in the error output — auth failures, missing config, etc.
-    const errorOutput = result.stderr ? `${output}\n\nstderr:\n${result.stderr}` : output;
-    const errorContent = errorOutput.length > 4000 ? errorOutput.slice(-4000) : errorOutput;
+
+    // Build a human-readable error reason
+    let reason;
+    if (result.code === 143) {
+      reason = `Process was killed (SIGTERM) — likely hit the ${timeoutMinutes}-minute timeout before the CLI exited cleanly.`;
+    } else if (result.code === 137) {
+      reason = `Process was force-killed (SIGKILL) — out of memory or hard timeout.`;
+    } else {
+      reason = `CLI exited with code ${result.code}.`;
+    }
+
+    // Filter out raw streaming protocol lines from stdout — keep only readable content
+    const sanitizedOutput = output
+      .split("\n")
+      .filter(line => {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        // Skip raw JSONL streaming protocol lines
+        try {
+          const obj = JSON.parse(trimmed);
+          if (obj.type === "stream_event" || obj.type === "assistant" || obj.type === "system") return false;
+        } catch { /* not JSON — keep it */ }
+        return true;
+      })
+      .join("\n")
+      .trim();
+
+    // Combine reason + stderr + any remaining meaningful output
+    let errorContent = `**${reason}**`;
+    if (result.stderr?.trim()) errorContent += `\n\nstderr:\n${result.stderr.trim()}`;
+    if (sanitizedOutput) errorContent += `\n\nOutput:\n${sanitizedOutput}`;
+    if (errorContent.length > 4000) errorContent = errorContent.slice(-4000);
+
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
-        content: `Agent encountered an error (exit code ${result.code}):\n\n${errorContent}`,
+        content: errorContent,
       });
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
     } catch { /* best effort */ }

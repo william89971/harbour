@@ -2,6 +2,18 @@
 
 ## v1.3.0-dev
 
+### Jobs
+- Trigger run button — instantly start a run for any job (paused or active) with confirmation dialog
+- Per-job CLI timeout — runner uses each job's `timeout_minutes` setting instead of a hardcoded 10-minute limit
+
+### Runs
+- Comment on done/failed runs to reopen them as pending — continues the conversation with the agent
+- Reply form visible on waiting, pending, done, and failed runs (hidden for running/scheduled/skipped)
+- Sanitized error output — timeout and crash errors now show a human-readable reason instead of raw streaming JSON protocol lines
+
+### Runner
+- CLI tool detection uses extended PATH (homebrew, .local/bin, npm-global) for version checks
+
 ### Settings
 - Configurable "Recent Runs Shown" limit — controls how many completed runs display on the main Runs page (default: 10)
 

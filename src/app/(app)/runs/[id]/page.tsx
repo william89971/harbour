@@ -311,8 +311,8 @@ export default function RunDetailPage() {
         </div>
       </div>
 
-      {/* Reply Form (only for waiting/running runs) */}
-      {(run.status === "waiting" || run.status === "pending" || run.status === "running") && (
+      {/* Reply Form (waiting, pending, done, failed — but not running) */}
+      {(run.status !== "running" && run.status !== "scheduled" && run.status !== "skipped") && (
         <form onSubmit={handleSend} className="space-y-2">
           <Textarea
             value={message}

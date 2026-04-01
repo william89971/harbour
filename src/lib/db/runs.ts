@@ -370,6 +370,7 @@ function buildRunPayload(runId: string) {
       check: job.check_command,
       model: job.model || null,
       thinking: job.thinking || null,
+      timeout_minutes: job.timeout_minutes ?? 30,
     },
     docs,
     data,

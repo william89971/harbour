@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { execSync } from "child_process";
+import { homedir } from "os";
+import path from "path";
 
 const CLI_TOOLS = [
   { id: "claude", name: "Claude", binary: "claude", versionFlag: "--version" },
@@ -8,14 +10,24 @@ const CLI_TOOLS = [
   { id: "gemini", name: "Gemini", binary: "gemini", versionFlag: "--version" },
 ];
 
+// Extend PATH with common user binary locations that may not be in the server's PATH
+const EXTRA_PATHS = [
+  path.join(homedir(), ".local", "bin"),
+  path.join(homedir(), ".npm-global", "bin"),
+  "/usr/local/bin",
+  "/opt/homebrew/bin",
+];
+
+const extendedPath = [...EXTRA_PATHS, process.env.PATH].join(":");
+
 function checkTool(tool: typeof CLI_TOOLS[number]) {
   try {
-    const whichResult = execSync(`which ${tool.binary} 2>/dev/null`, { encoding: "utf-8" }).trim();
+    const whichResult = execSync(`which ${tool.binary} 2>/dev/null`, { encoding: "utf-8", env: { ...process.env, PATH: extendedPath } }).trim();
     if (!whichResult) return { id: tool.id, name: tool.name, installed: false };
 
     let version = null;
     try {
-      version = execSync(`${tool.binary} ${tool.versionFlag} 2>/dev/null`, { encoding: "utf-8", timeout: 5000 }).trim();
+      version = execSync(`${tool.binary} ${tool.versionFlag} 2>/dev/null`, { encoding: "utf-8", timeout: 5000, env: { ...process.env, PATH: extendedPath } }).trim();
       // Extract just the version number if there's extra text
       const match = version.match(/[\d]+\.[\d]+[\d.]*/);
       if (match) version = match[0];

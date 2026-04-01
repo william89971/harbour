@@ -191,6 +191,22 @@ export function createOneOffRun(agentId: string, data: {
   return { jobId, runId };
 }
 
+export function triggerJobRun(jobId: string) {
+  const db = getDb();
+  const job = db.prepare(`SELECT id, agent_id FROM jobs WHERE id = ?`).get(jobId) as any;
+  if (!job) return null;
+
+  const runId = uuid();
+  const now = Math.floor(Date.now() / 1000);
+
+  db.prepare(`
+    INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, created_at, updated_at)
+    VALUES (?, ?, ?, 'scheduled', ?, ?, ?)
+  `).run(runId, jobId, job.agent_id, now, now, now);
+
+  return { jobId, runId };
+}
+
 export function linkDocToJob(jobId: string, docId: string) {
   const db = getDb();
   db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`).run(jobId, docId);
