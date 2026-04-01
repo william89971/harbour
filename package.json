@@ -1,6 +1,6 @@
 {
   "name": "harbour",
-  "version": "1.3.0-dev",
+  "version": "1.3.0",
   "private": true,
   "bin": {
     "harbour": "./bin/harbour.mjs"
