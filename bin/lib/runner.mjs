@@ -1,5 +1,6 @@
 import { loadRunnerConfigs, loadSessions, saveSessions } from "./config.mjs";
 import { getProvider, ensureWorkingDir, runCliTool } from "./providers.mjs";
+import { spawn } from "child_process";
 
 async function apiCall(url, apiKey, method = "GET", body = null) {
   const opts = {
@@ -105,13 +106,39 @@ function buildPrompt(payload, apiKey, isResume) {
     prompt += "\n";
   }
 
-  if (payload.job?.check) {
-    prompt += `## Pre-run Check\n\nBefore starting, run this command: \`${payload.job.check}\`\nIf it returns non-zero, skip this run by setting status to "skipped".\n\n`;
-  }
+  // Check output is appended by the runner after executing the check command
+  // (see runSingleAgent — check commands are run as shell processes, not by the LLM)
 
   prompt += apiPrompt;
 
   return prompt;
+}
+
+/**
+ * Run a pre-run check command. Pipes the full payload JSON to stdin.
+ * Exit 0 = work found (proceed), exit 1 = no work (skip silently), exit 2+ = error.
+ * Returns { code, stdout, stderr }.
+ */
+function runCheckCommand(command, payloadJson, cwd) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("bash", ["-c", command], {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 30_000,
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (data) => { stdout += data.toString(); });
+    child.stderr.on("data", (data) => { stderr += data.toString(); });
+    child.on("error", (err) => reject(err));
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+
+    // Pipe the payload to stdin
+    child.stdin.write(payloadJson);
+    child.stdin.end();
+  });
 }
 
 async function runSingleAgent(runner) {
@@ -148,8 +175,37 @@ async function runSingleAgent(runner) {
 
   console.log(`  [${agentName}] ${isResume ? "Resuming" : "Starting"} run ${runId} (${payload.job?.name || "one-off"})`);
 
-  // Build prompt
-  const prompt = buildPrompt(payload, apiKey, isResume);
+  // Execute pre-run check command (if defined) before invoking the LLM
+  let checkOutput = "";
+  if (!isResume && payload.job?.check) {
+    const workingDir = ensureWorkingDir(agentName);
+    try {
+      const checkResult = await runCheckCommand(payload.job.check, JSON.stringify(payload), workingDir);
+      if (checkResult.code !== 0) {
+        console.log(`  [${agentName}] Check exited ${checkResult.code} — skipping`);
+        if (checkResult.code >= 2 && checkResult.stderr?.trim()) {
+          console.error(`  [${agentName}] Check error: ${checkResult.stderr.trim()}`);
+        }
+        try {
+          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" });
+        } catch { /* best effort */ }
+        return;
+      }
+      checkOutput = checkResult.stdout?.trim() || "";
+    } catch (err) {
+      console.error(`  [${agentName}] Check command failed: ${err.message}`);
+      try {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" });
+      } catch { /* best effort */ }
+      return;
+    }
+  }
+
+  // Build prompt — append check output as additional context
+  let prompt = buildPrompt(payload, apiKey, isResume);
+  if (checkOutput) {
+    prompt += `## Pre-run Check Output\n\n${checkOutput}\n\n`;
+  }
 
   // Build CLI command — job-level model/thinking override agent defaults
   const model = payload.job?.model || agentModel;
