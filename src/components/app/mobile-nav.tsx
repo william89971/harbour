@@ -102,6 +102,7 @@ export function MobileBottomNav() {
             <span className="text-xs text-muted-foreground">Theme</span>
             <ThemeToggle />
           </div>
+          <p className="text-[11px] text-muted-foreground/50 text-center pt-2">v{process.env.NEXT_PUBLIC_APP_VERSION}</p>
         </SheetContent>
       </Sheet>
     </>

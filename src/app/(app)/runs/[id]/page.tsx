@@ -22,7 +22,7 @@ type Activity = {
 
 type Run = {
   id: string; job_id: string; agent_id: string; status: string;
-  job_name: string; agent_name: string; one_off: number;
+  job_name: string; agent_name: string; agent_type: string; one_off: number;
   created_at: number; updated_at: number; completed_at: number | null;
   activity: Activity[];
 };
@@ -311,8 +311,8 @@ export default function RunDetailPage() {
         </div>
       </div>
 
-      {/* Reply Form (only for waiting/running runs) */}
-      {(run.status === "waiting" || run.status === "pending" || run.status === "running") && (
+      {/* Reply Form (waiting, pending, done, failed — but not running) */}
+      {(run.status !== "running" && run.status !== "scheduled" && run.status !== "skipped") && (
         <form onSubmit={handleSend} className="space-y-2">
           <Textarea
             value={message}
@@ -334,8 +334,8 @@ export default function RunDetailPage() {
         </form>
       )}
 
-      {/* Live Output */}
-      <LiveOutput runId={run.id} status={run.status} />
+      {/* Live Output (harbour agents only) */}
+      {run.agent_type === "harbour" && <LiveOutput runId={run.id} status={run.status} />}
     </div>
   );
 }

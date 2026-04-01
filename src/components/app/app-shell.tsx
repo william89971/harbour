@@ -91,6 +91,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <LogOut className="h-3.5 w-3.5" />
           </Button>
         </div>
+        <p className="text-[11px] text-muted-foreground/50 text-center">v{process.env.NEXT_PUBLIC_APP_VERSION}</p>
       </div>
     </div>
   );

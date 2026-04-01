@@ -95,6 +95,22 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* Recent Runs Limit */}
+        <div className="space-y-2">
+          <Label>Recent Runs Shown</Label>
+          <p className="text-xs text-muted-foreground">Number of completed runs to display on the main Runs page.</p>
+          <Input
+            type="number"
+            min={1}
+            className="font-mono text-sm w-32"
+            value={settings?.recent_runs_limit || "10"}
+            onChange={e => {
+              const v = parseInt(e.target.value, 10);
+              if (v > 0) updateSetting("recent_runs_limit", String(v));
+            }}
+          />
+        </div>
+
         {/* Signup */}
         <div className="flex items-center justify-between rounded-lg border p-4">
           <div>

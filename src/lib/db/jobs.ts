@@ -132,7 +132,20 @@ export function updateJob(id: string, data: {
   if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }
   if (data.timeoutMinutes !== undefined) { fields.push("timeout_minutes = ?"); values.push(data.timeoutMinutes); }
 
-  if (data.active !== undefined) { fields.push("active = ?"); values.push(data.active ? 1 : 0); }
+  if (data.active !== undefined) {
+    fields.push("active = ?"); values.push(data.active ? 1 : 0);
+    // When activating a job that has no next_run_at, compute it from the schedule
+    if (data.active && data.nextRunAt === undefined) {
+      const job = db.prepare(`SELECT schedule, next_run_at FROM jobs WHERE id = ?`).get(id) as any;
+      if (job && !job.next_run_at && job.schedule) {
+        const schedule = data.schedule || job.schedule;
+        const nextRunAt = getNextRunTime(schedule, undefined, getTimezone());
+        if (nextRunAt !== null) {
+          fields.push("next_run_at = ?"); values.push(nextRunAt);
+        }
+      }
+    }
+  }
   if (data.nextRunAt !== undefined) { fields.push("next_run_at = ?"); values.push(data.nextRunAt); }
   if (fields.length === 0) return getJobById(id);
   fields.push("updated_at = unixepoch()");
@@ -188,6 +201,22 @@ export function createOneOffRun(agentId: string, data: {
   });
 
   create();
+  return { jobId, runId };
+}
+
+export function triggerJobRun(jobId: string) {
+  const db = getDb();
+  const job = db.prepare(`SELECT id, agent_id FROM jobs WHERE id = ?`).get(jobId) as any;
+  if (!job) return null;
+
+  const runId = uuid();
+  const now = Math.floor(Date.now() / 1000);
+
+  db.prepare(`
+    INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, created_at, updated_at)
+    VALUES (?, ?, ?, 'scheduled', ?, ?, ?)
+  `).run(runId, jobId, job.agent_id, now, now, now);
+
   return { jobId, runId };
 }
 

@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.3.0 — 2026-04-01
+
+### Jobs
+- Trigger run button — instantly start a run for any job (paused or active) with confirmation dialog
+- Per-job CLI timeout — runner uses each job's `timeout_minutes` setting instead of a hardcoded 10-minute limit
+- Re-activating a paused job now computes `next_run_at` from the schedule
+
+### Runs
+- Comment on done/failed runs to reopen them as pending — continues the conversation with the agent
+- Reply form visible on waiting, pending, done, and failed runs (hidden for running/scheduled/skipped)
+- Sanitized error output — timeout and crash errors now show a human-readable reason instead of raw streaming JSON protocol lines
+- Output section hidden for external agent runs (only shown for harbour agents)
+
+### Runner
+- Pre-run check commands now execute as shell processes — the runner runs the command directly, pipes the full payload JSON to stdin, and appends stdout to the prompt (exit 0 = proceed, exit 1 = skip, exit 2+ = error)
+- CLI tool detection uses extended PATH (homebrew, .local/bin, npm-global) for version checks
+
+### Settings
+- Configurable "Recent Runs Shown" limit — controls how many completed runs display on the main Runs page (default: 10)
+
+### UI
+- Version number shown in sidebar footer and mobile More menu
+
 ## v1.2.0 — 2026-03-31
 
 ### Environment Variables

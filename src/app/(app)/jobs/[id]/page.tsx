@@ -17,7 +17,7 @@ import { useApp } from "@/components/app/app-context";
 import { SchedulePicker, parseSchedule, serializeSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
   Settings, Trash2, X, Plus, Pin,
-  FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock, Cpu, KeyRound,
+  FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock, Cpu, KeyRound, Zap,
 } from "lucide-react";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 import { timeAgo, formatTimestamp } from "@/lib/time";
@@ -206,6 +206,22 @@ export default function JobDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
+  const [triggering, setTriggering] = useState(false);
+
+  async function handleTrigger() {
+    if (!job) return;
+    if (!confirm(`Trigger "${job.name}" now?`)) return;
+    setTriggering(true);
+    try {
+      const res = await fetch(`/api/jobs/${id}/trigger`, { method: "POST" });
+      if (!res.ok) { alert("Failed to trigger run"); return; }
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs", id] });
+    } finally {
+      setTriggering(false);
+    }
+  }
+
   async function handleDelete() {
     if (!confirm(`Delete "${job?.name}"? All run history will be lost.`)) return;
     const res = await fetch(`/api/jobs/${id}`, { method: "DELETE" });
@@ -229,6 +245,9 @@ export default function JobDetailPage() {
           {job.description && <p className="text-sm text-muted-foreground mt-0.5">{job.description}</p>}
         </div>
         <div className="flex gap-1.5">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleTrigger} disabled={triggering} title="Trigger run now">
+            <Zap className="h-3.5 w-3.5" />
+          </Button>
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleToggleActive} title={job.active ? "Pause" : "Resume"}>
             {job.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </Button>

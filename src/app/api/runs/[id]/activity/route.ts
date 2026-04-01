@@ -39,8 +39,8 @@ export const POST = withAuth(async (req, auth, { params }) => {
 
   const entry = addRunActivity(id, authorType, authorId, authorName, body.content);
 
-  // When a user responds to a waiting run, move to pending (ready for agent pickup)
-  if (authorType === "user" && run.status === "waiting") {
+  // When a user responds, move to pending (ready for agent pickup)
+  if (authorType === "user" && ["waiting", "done", "failed"].includes(run.status)) {
     updateRunStatus(id, "pending");
     addRunActivity(id, "system", null, "System", "Status changed to **pending**");
   }
