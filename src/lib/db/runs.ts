@@ -16,7 +16,7 @@ export function createRun(jobId: string, agentId: string) {
 export function getRunById(id: string) {
   const db = getDb();
   const run = db.prepare(`
-    SELECT r.*, j.name as job_name, j.one_off, j.agent_id, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.one_off, j.agent_id, a.name as agent_name, a.type as agent_type
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN agents a ON r.agent_id = a.id
