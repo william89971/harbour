@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { FolderOpen, ChevronDown, Plus, Check } from "lucide-react";
 
-export function ProjectSwitcher() {
+export function ProjectSwitcher({ variant = "sidebar" }: { variant?: "sidebar" | "mobile" }) {
   const { projects, activeProjectId, setActiveProjectId } = useApp();
   const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
@@ -60,9 +60,14 @@ export function ProjectSwitcher() {
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
-          <FolderOpen className="h-4 w-4 shrink-0" />
-          <span className="flex-1 truncate text-left">{activeProject ? activeProject.name : "All Projects"}</span>
+        <DropdownMenuTrigger className={variant === "mobile"
+          ? "flex items-center gap-1.5 text-sm font-semibold tracking-tight"
+          : "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+        }>
+          {variant === "sidebar" && <FolderOpen className="h-4 w-4 shrink-0" />}
+          <span className={variant === "mobile" ? "truncate max-w-[200px]" : "flex-1 truncate text-left"}>
+            {activeProject ? activeProject.name : variant === "mobile" ? "Harbour" : "All Projects"}
+          </span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-52">

@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.4.0 — 2026-04-02
+
+### Projects
+- Optional projects for organizing work — a view layer over agents, jobs, docs, env vars, and databases
+- Project switcher in sidebar (desktop) and header (mobile) with create/switch/all views
+- "Add Existing" buttons on all list pages when viewing a project
+- Auto-link: creating items while in a project links them automatically
+- Auto-link dependencies: adding a job to a project pulls in its agent, docs, env vars, and databases
+- Project settings in Settings page — rename and delete (with confirmation)
+- All list API endpoints accept optional `?projectId=` filter
+- Deleting a project only removes grouping — no entities are affected
+
 ## v1.3.0 — 2026-04-01
 
 ### Jobs

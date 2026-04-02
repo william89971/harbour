@@ -10,6 +10,10 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 
 - `src/app/(app)/` — dashboard pages (runs, jobs, agents, docs, databases, env-vars, settings)
 - `src/app/api/` — API routes (agent-facing + dashboard), all use `withAuth`/`withUserAuth` wrappers
+- `src/lib/db/projects.ts` — project CRUD + linking/unlinking (auto-links job dependencies)
+- `src/components/app/project-switcher.tsx` — sidebar/mobile project dropdown with create dialog
+- `src/components/app/project-link-dialog.tsx` — "Add Existing" dialog for linking items to projects
+- `src/lib/hooks/use-project-filter.ts` — hook for passing active project to API queries
 - `src/lib/auth.ts` — `withAuth`, `withUserAuth`, `requireAgentOwnership` HOF wrappers for API routes
 - `src/lib/db/` — database schema, queries, migrations
 - `src/lib/encryption.ts` — AES-256-GCM encryption for env vars
@@ -35,6 +39,7 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - Model and thinking/effort can be set per agent (default) and overridden per job.
 - API routes use `withAuth(handler)` or `withUserAuth(handler)` — never inline auth checks. Agent-facing mutation routes use `requireAgentOwnership()` to enforce scope.
 - Job and run creation functions (`createJob`, `createOneOffRun`, `getAgentNextRun`) are wrapped in transactions.
+- Projects are optional view-layer groupings. Entities don't know about projects — linking tables hold the references. All list queries accept an optional `projectId` filter. Adding a job to a project auto-links its agent, docs, env vars, and databases.
 
 ## Browser testing / screenshots
 

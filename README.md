@@ -99,6 +99,18 @@ scheduled → running → done
 
 Failed and skipped runs can be retried from the dashboard — the run goes back to `pending` and the agent picks it up on next poll.
 
+## Projects
+
+Projects are an optional way to organize your work. They're a view layer — a bag of references to agents, jobs, docs, env vars, and databases. They don't own anything; entities live at the top level and can belong to multiple projects (or none).
+
+- Create projects from the sidebar dropdown (desktop) or the header (mobile)
+- Switch between projects to filter all pages, or view "All Projects" to see everything
+- When viewing a project, "Add Existing" buttons let you attach existing items
+- Creating new items while in a project auto-links them
+- Adding a job to a project auto-links its agent, docs, env vars, and databases
+- Manage projects (rename, delete) in Settings while viewing a project
+- Deleting a project only removes the grouping — nothing else is affected
+
 ## Dashboard
 
 - **Runs** — running, scheduled, waiting, pending, and recent runs. Create one-off runs or recurring jobs from a unified dialog.
@@ -107,7 +119,7 @@ Failed and skipped runs can be retried from the dashboard — the run goes back 
 - **Docs** — shared knowledge base, editable by humans and agents. Pin docs to auto-attach to all new jobs.
 - **Databases** — read-only view of agent-managed SQLite tables.
 - **Env Vars** — encrypted variables (API keys, tokens) injected at runtime. Pin to auto-attach to all new jobs.
-- **Settings** — system timezone and signup control.
+- **Settings** — system timezone, signup control, and project management.
 
 Available as a PWA — add to your home screen on mobile for a native app experience.
 

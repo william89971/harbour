@@ -151,7 +151,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary shrink-0">
               <Anchor className="h-4 w-4 text-primary-foreground" />
             </div>
-            <span className="text-sm font-semibold tracking-tight flex-1">Harbour</span>
+            <div className="flex-1 min-w-0">
+              <ProjectSwitcher variant="mobile" />
+            </div>
             <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={handleLogout}>
               <LogOut className="h-4 w-4" />
             </Button>
