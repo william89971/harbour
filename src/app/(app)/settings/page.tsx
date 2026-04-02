@@ -4,14 +4,56 @@ import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Settings as SettingsIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Trash2 } from "lucide-react";
+import { useApp } from "@/components/app/app-context";
+import { useRouter } from "next/navigation";
 
 type Settings = Record<string, string>;
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
+  const router = useRouter();
+  const { projects, activeProjectId, setActiveProjectId } = useApp();
+  const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : null;
+
   const [tzSearch, setTzSearch] = useState("");
   const [tzOpen, setTzOpen] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [projectNameLoaded, setProjectNameLoaded] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Sync project name when active project changes
+  if (activeProject && (!projectNameLoaded || projectName === "")) {
+    setProjectName(activeProject.name);
+    setProjectNameLoaded(true);
+  }
+  if (!activeProject && projectNameLoaded) {
+    setProjectNameLoaded(false);
+  }
+
+  async function handleRenameProject() {
+    if (!activeProjectId || !projectName.trim() || projectName === activeProject?.name) return;
+    await fetch(`/api/projects/${activeProjectId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: projectName.trim() }),
+    });
+    queryClient.invalidateQueries({ queryKey: ["projects"] });
+  }
+
+  async function handleDeleteProject() {
+    if (!activeProjectId) return;
+    setDeleting(true);
+    await fetch(`/api/projects/${activeProjectId}`, { method: "DELETE" });
+    setActiveProjectId(null);
+    queryClient.invalidateQueries({ queryKey: ["projects"] });
+    setShowDeleteConfirm(false);
+    setDeleting(false);
+    router.push("/");
+  }
 
   const { data: settings, isLoading } = useQuery<Settings>({
     queryKey: ["settings"],
@@ -60,6 +102,35 @@ export default function SettingsPage() {
       </div>
 
       <div className="space-y-6 max-w-lg">
+        {/* Project Settings */}
+        {activeProject && (
+          <div className="rounded-lg border p-4 space-y-4">
+            <div>
+              <Label className="text-base font-medium">Project</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Manage the current project.</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input
+                value={projectName}
+                onChange={e => setProjectName(e.target.value)}
+                onBlur={handleRenameProject}
+                onKeyDown={e => { if (e.key === "Enter") handleRenameProject(); }}
+                className="text-sm"
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-destructive/20 bg-destructive/5 p-3">
+              <div>
+                <p className="text-sm font-medium">Delete project</p>
+                <p className="text-xs text-muted-foreground">Removes the project and all links. Agents, jobs, docs, and env vars are not deleted.</p>
+              </div>
+              <Button variant="destructive" size="sm" onClick={() => setShowDeleteConfirm(true)}>
+                <Trash2 className="h-4 w-4 mr-1.5" /> Delete
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Timezone */}
         <div className="space-y-2">
           <Label>Timezone</Label>
@@ -125,6 +196,23 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
+
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {activeProject?.name}?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will remove the project and all its links. Your agents, jobs, docs, and env vars will not be deleted.
+          </p>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDeleteProject} disabled={deleting}>
+              {deleting ? "Deleting..." : "Delete Project"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

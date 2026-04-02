@@ -58,7 +58,35 @@ export function listAgentIdsForProject(projectId: string): string[] {
 
 export function linkJobToProject(projectId: string, jobId: string) {
   const db = getDb();
-  db.prepare(`INSERT OR IGNORE INTO project_jobs (project_id, job_id) VALUES (?, ?)`).run(projectId, jobId);
+
+  db.transaction(() => {
+    // Link the job itself
+    db.prepare(`INSERT OR IGNORE INTO project_jobs (project_id, job_id) VALUES (?, ?)`).run(projectId, jobId);
+
+    // Auto-link the job's agent
+    const job = db.prepare(`SELECT agent_id FROM jobs WHERE id = ?`).get(jobId) as { agent_id: string } | undefined;
+    if (job) {
+      db.prepare(`INSERT OR IGNORE INTO project_agents (project_id, agent_id) VALUES (?, ?)`).run(projectId, job.agent_id);
+    }
+
+    // Auto-link the job's docs
+    const docs = db.prepare(`SELECT doc_id FROM job_docs WHERE job_id = ?`).all(jobId) as { doc_id: string }[];
+    for (const d of docs) {
+      db.prepare(`INSERT OR IGNORE INTO project_docs (project_id, doc_id) VALUES (?, ?)`).run(projectId, d.doc_id);
+    }
+
+    // Auto-link the job's env vars
+    const envVars = db.prepare(`SELECT env_var_id FROM job_env_vars WHERE job_id = ?`).all(jobId) as { env_var_id: string }[];
+    for (const ev of envVars) {
+      db.prepare(`INSERT OR IGNORE INTO project_env_vars (project_id, env_var_id) VALUES (?, ?)`).run(projectId, ev.env_var_id);
+    }
+
+    // Auto-link the job's databases
+    const databases = db.prepare(`SELECT database_id FROM job_databases WHERE job_id = ?`).all(jobId) as { database_id: string }[];
+    for (const d of databases) {
+      db.prepare(`INSERT OR IGNORE INTO project_databases (project_id, database_id) VALUES (?, ?)`).run(projectId, d.database_id);
+    }
+  })();
 }
 
 export function unlinkJobFromProject(projectId: string, jobId: string) {

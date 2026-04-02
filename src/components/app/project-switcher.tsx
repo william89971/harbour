@@ -48,10 +48,10 @@ export function ProjectSwitcher() {
     });
     if (res.ok) {
       const project = await res.json();
-      queryClient.invalidateQueries({ queryKey: ["projects"] });
       setNewName("");
       setShowNew(false);
-      // Auto-select the new project
+      // Wait for the projects list to include the new one before selecting
+      await queryClient.invalidateQueries({ queryKey: ["projects"] });
       handleSelect(project.id);
     }
     setCreating(false);
