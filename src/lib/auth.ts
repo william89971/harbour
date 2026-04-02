@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { getSession, authenticateAgent } from "./db/queries";
+import { getSession, authenticateAgent, authenticateAdminApiKey } from "./db/queries";
 
 export type UserAuth = {
   type: "user";
@@ -23,14 +23,22 @@ type AuthHandler = (req: NextRequest, auth: AuthContext, ctx: RouteContext) => P
 type UserAuthHandler = (req: NextRequest, auth: UserAuth, ctx: RouteContext) => Promise<Response>;
 
 async function getAuthFromRequest(req: NextRequest): Promise<AuthContext | null> {
-  // Check for API key auth (agents)
+  // Check for API key auth (agents or admin keys)
   const authHeader = req.headers.get("authorization");
   if (authHeader?.startsWith("Bearer ")) {
     const apiKey = authHeader.slice(7);
+
     const agent = authenticateAgent(apiKey);
     if (agent) {
       return { type: "agent", agentId: agent.id, agentName: agent.name };
     }
+
+    // Admin API keys resolve to the creating user's identity
+    const adminKey = authenticateAdminApiKey(apiKey);
+    if (adminKey) {
+      return { type: "user", userId: adminKey.created_by_user_id, email: adminKey.email, displayName: adminKey.display_name };
+    }
+
     return null;
   }
 

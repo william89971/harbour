@@ -344,6 +344,22 @@ export function initializeSchema(db: Database.Database) {
     db.exec(`ALTER TABLE jobs ADD COLUMN thinking TEXT`);
   }
 
+  // Migrations: admin API keys table
+  const adminKeyCols = db.prepare(`PRAGMA table_info(admin_api_keys)`).all() as any[];
+  if (adminKeyCols.length === 0) {
+    db.exec(`
+      CREATE TABLE admin_api_keys (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        api_key_hash TEXT NOT NULL UNIQUE,
+        created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        last_used_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      )
+    `);
+  }
+
   // Ensure encryption key exists (generates on first run)
   try { encrypt("init"); } catch { /* non-fatal */ }
 

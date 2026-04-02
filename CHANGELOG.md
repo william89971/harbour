@@ -2,6 +2,14 @@
 
 ## v1.4.0 — 2026-04-02
 
+### Admin API Keys
+- Admin API keys for external agents to manage Harbour remotely with full user-level access
+- Create and revoke keys from Settings page, each with a name and last-used tracking
+- Key shown once on creation as a copyable invite snippet with URL and bootstrap instructions
+- Admin keys resolve to the creating user's identity for audit trails
+- Admin guide served at `/api/admin-guide` — full API reference for management agents
+- Keys prefixed `hbr_adm_`, stored as SHA-256 hash (never plaintext)
+
 ### Projects
 - Optional projects for organizing work — a view layer over agents, jobs, docs, env vars, and databases
 - Project switcher in sidebar (desktop) and header (mobile) with create/switch/all views

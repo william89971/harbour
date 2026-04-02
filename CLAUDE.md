@@ -14,7 +14,9 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - `src/components/app/project-switcher.tsx` — sidebar/mobile project dropdown with create dialog
 - `src/components/app/project-link-dialog.tsx` — "Add Existing" dialog for linking items to projects
 - `src/lib/hooks/use-project-filter.ts` — hook for passing active project to API queries
-- `src/lib/auth.ts` — `withAuth`, `withUserAuth`, `requireAgentOwnership` HOF wrappers for API routes
+- `src/lib/auth.ts` — `withAuth`, `withUserAuth`, `requireAgentOwnership` HOF wrappers for API routes (admin API keys resolve to creating user's identity)
+- `src/lib/db/admin-api-keys.ts` — admin API key CRUD + authentication
+- `ADMIN_GUIDE.md` — admin agent onboarding guide, served at `/api/admin-guide`
 - `src/lib/db/` — database schema, queries, migrations
 - `src/lib/encryption.ts` — AES-256-GCM encryption for env vars
 - `src/lib/schedule.ts` — schedule parsing and timezone-aware next-run-time calculation
