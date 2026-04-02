@@ -132,9 +132,18 @@ export function getDatabaseByName(name: string): (DatabaseMeta & { columns: Colu
   return { ...meta, columns: columns.filter(c => c.name !== "_id") };
 }
 
-export function listDatabases() {
+export function listDatabases(projectId?: string) {
   const db = getDb();
-  const metas = db.prepare(`SELECT * FROM databases ORDER BY name ASC`).all() as DatabaseMeta[];
+  let metas: DatabaseMeta[];
+  if (projectId) {
+    metas = db.prepare(`
+      SELECT * FROM databases
+      WHERE id IN (SELECT database_id FROM project_databases WHERE project_id = ?)
+      ORDER BY name ASC
+    `).all(projectId) as DatabaseMeta[];
+  } else {
+    metas = db.prepare(`SELECT * FROM databases ORDER BY name ASC`).all() as DatabaseMeta[];
+  }
 
   return metas.map(meta => {
     const count = db.prepare(`SELECT COUNT(*) as count FROM "${meta.table_name}"`).get() as { count: number };

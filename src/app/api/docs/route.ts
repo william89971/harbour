@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAuth, getActorFromAuth } from "@/lib/auth";
 import { listDocs, createDoc } from "@/lib/db/queries";
 
-export const GET = withAuth(async () => {
-  return NextResponse.json(listDocs());
+export const GET = withAuth(async (req) => {
+  const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
+  return NextResponse.json(listDocs(projectId));
 });
 
 export const POST = withAuth(async (req, auth) => {

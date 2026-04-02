@@ -7,22 +7,27 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { KeyRound, Plus, Pin } from "lucide-react";
+import { KeyRound, Plus, Pin, Link2 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
+import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 
 type EnvVar = { id: string; name: string; pinned: number; created_at: number; updated_at: number };
 
 export default function EnvVarsPage() {
   const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
+  const [showLinkExisting, setShowLinkExisting] = useState(false);
   const [newName, setNewName] = useState("");
   const [newValue, setNewValue] = useState("");
+  const projectFilter = useProjectFilter();
+  const activeProjectId = useActiveProjectId();
 
   const { data: envVars = [], isLoading: loading } = useQuery<EnvVar[]>({
-    queryKey: ["env-vars"],
+    queryKey: ["env-vars", projectFilter],
     queryFn: async () => {
-      const res = await fetch("/api/env-vars");
+      const res = await fetch(`/api/env-vars${projectFilter}`);
       if (!res.ok) return [];
       return res.json();
     },
@@ -38,6 +43,15 @@ export default function EnvVarsPage() {
       body: JSON.stringify({ name: newName.trim(), value: newValue }),
     });
     if (res.ok) {
+      const envVar = await res.json();
+      // Auto-link to active project
+      if (activeProjectId) {
+        await fetch(`/api/projects/${activeProjectId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "link", type: "env-var", targetId: envVar.id }),
+        });
+      }
       setShowNew(false);
       setNewName("");
       setNewValue("");
@@ -61,7 +75,14 @@ export default function EnvVarsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Env Vars</h1>
           <p className="text-sm text-muted-foreground mt-1">Encrypted variables injected at runtime.</p>
         </div>
-        <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Env Var</Button>
+        <div className="flex gap-2">
+          {activeProjectId && (
+            <Button variant="outline" size="sm" onClick={() => setShowLinkExisting(true)}>
+              <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
+            </Button>
+          )}
+          <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Env Var</Button>
+        </div>
       </div>
 
       {envVars.length === 0 ? (
@@ -108,6 +129,20 @@ export default function EnvVarsPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {activeProjectId && (
+        <ProjectLinkDialog
+          open={showLinkExisting}
+          onOpenChange={setShowLinkExisting}
+          projectId={activeProjectId}
+          type="env-var"
+          queryKey="env-vars"
+          fetchAllUrl="/api/env-vars"
+          icon={KeyRound}
+          title="Add Existing Env Var"
+          nameClass="font-mono"
+        />
+      )}
     </div>
   );
 }

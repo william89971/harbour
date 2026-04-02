@@ -10,6 +10,9 @@ import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 import { CreateDialog } from "@/components/app/create-dialog";
 import { formatSchedule, parseSchedule } from "@/components/app/schedule-picker";
+import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
+import { Link2 } from "lucide-react";
 
 type Job = {
   id: string; agent_id: string; agent_name: string; name: string;
@@ -20,11 +23,14 @@ type Job = {
 
 export default function JobsPage() {
   const [showCreate, setShowCreate] = useState(false);
+  const [showLinkExisting, setShowLinkExisting] = useState(false);
+  const projectFilter = useProjectFilter();
+  const activeProjectId = useActiveProjectId();
 
   const { data: jobs = [], isLoading: loading } = useQuery<Job[]>({
-    queryKey: ["jobs"],
+    queryKey: ["jobs", projectFilter],
     queryFn: async () => {
-      const res = await fetch("/api/jobs");
+      const res = await fetch(`/api/jobs${projectFilter}`);
       if (!res.ok) return [];
       return res.json();
     },
@@ -40,9 +46,16 @@ export default function JobsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Jobs</h1>
           <p className="text-sm text-muted-foreground mt-1">Recurring work across all agents.</p>
         </div>
-        <Button onClick={() => setShowCreate(true)} size="sm">
-          <Plus className="h-4 w-4 mr-1.5" /> New Job
-        </Button>
+        <div className="flex gap-2">
+          {activeProjectId && (
+            <Button variant="outline" size="sm" onClick={() => setShowLinkExisting(true)}>
+              <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
+            </Button>
+          )}
+          <Button onClick={() => setShowCreate(true)} size="sm">
+            <Plus className="h-4 w-4 mr-1.5" /> New Job
+          </Button>
+        </div>
       </div>
 
       {jobs.length === 0 ? (
@@ -82,6 +95,19 @@ export default function JobsPage() {
       )}
 
       <CreateDialog open={showCreate} onOpenChange={setShowCreate} defaultTab="job" />
+
+      {activeProjectId && (
+        <ProjectLinkDialog
+          open={showLinkExisting}
+          onOpenChange={setShowLinkExisting}
+          projectId={activeProjectId}
+          type="job"
+          queryKey="jobs"
+          fetchAllUrl="/api/jobs"
+          icon={Briefcase}
+          title="Add Existing Job"
+        />
+      )}
     </div>
   );
 }

@@ -183,6 +183,45 @@ export function initializeSchema(db: Database.Database) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    -- Projects: optional organizational grouping (view layer only)
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Project linking tables (many-to-many)
+    CREATE TABLE IF NOT EXISTS project_agents (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      PRIMARY KEY (project_id, agent_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS project_jobs (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      PRIMARY KEY (project_id, job_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS project_docs (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      doc_id TEXT NOT NULL REFERENCES docs(id) ON DELETE CASCADE,
+      PRIMARY KEY (project_id, doc_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS project_env_vars (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      env_var_id TEXT NOT NULL REFERENCES env_vars(id) ON DELETE CASCADE,
+      PRIMARY KEY (project_id, env_var_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS project_databases (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      database_id TEXT NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
+      PRIMARY KEY (project_id, database_id)
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);

@@ -2,9 +2,13 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Database, Briefcase } from "lucide-react";
+import { useState } from "react";
+import { Database, Briefcase, Link2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
+import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 
 type DatabaseEntry = {
   id: string;
@@ -17,10 +21,14 @@ type DatabaseEntry = {
 };
 
 export default function DatabasesPage() {
+  const [showLinkExisting, setShowLinkExisting] = useState(false);
+  const projectFilter = useProjectFilter();
+  const activeProjectId = useActiveProjectId();
+
   const { data: databases = [], isLoading: loading } = useQuery<DatabaseEntry[]>({
-    queryKey: ["databases"],
+    queryKey: ["databases", projectFilter],
     queryFn: async () => {
-      const res = await fetch("/api/databases");
+      const res = await fetch(`/api/databases${projectFilter}`);
       if (!res.ok) return [];
       return res.json();
     },
@@ -31,9 +39,16 @@ export default function DatabasesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Databases</h1>
-        <p className="text-sm text-muted-foreground mt-1">Agent-managed SQLite tables.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Databases</h1>
+          <p className="text-sm text-muted-foreground mt-1">Agent-managed SQLite tables.</p>
+        </div>
+        {activeProjectId && (
+          <Button variant="outline" size="sm" onClick={() => setShowLinkExisting(true)}>
+            <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
+          </Button>
+        )}
       </div>
 
       {databases.length === 0 ? (
@@ -63,6 +78,20 @@ export default function DatabasesPage() {
             </Link>
           ))}
         </div>
+      )}
+
+      {activeProjectId && (
+        <ProjectLinkDialog
+          open={showLinkExisting}
+          onOpenChange={setShowLinkExisting}
+          projectId={activeProjectId}
+          type="database"
+          queryKey="databases"
+          fetchAllUrl="/api/databases"
+          icon={Database}
+          title="Add Existing Database"
+          nameClass="font-mono"
+        />
       )}
     </div>
   );

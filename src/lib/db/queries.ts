@@ -6,3 +6,4 @@ export * from "./docs";
 export * from "./database";
 export * from "./env-vars";
 export * from "./settings";
+export * from "./projects";
