@@ -5,20 +5,21 @@ import { getRecentRunsLimit } from "@/lib/db/settings";
 
 export const GET = withAuth(async (req) => {
   const filter = req.nextUrl.searchParams.get("filter");
+  const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
   if (filter === "waiting") {
-    return NextResponse.json(listWaitingRuns());
+    return NextResponse.json(listWaitingRuns(projectId));
   }
   const limit = getRecentRunsLimit();
   if (filter === "recent") {
-    return NextResponse.json(listRecentRuns(limit));
+    return NextResponse.json(listRecentRuns(limit, projectId));
   }
 
   // Default: return all sections
   return NextResponse.json({
-    scheduled: listScheduledRuns(),
-    running: listRunningRuns(),
-    waiting: listWaitingRuns(),
-    recent: listRecentRuns(limit),
+    scheduled: listScheduledRuns(projectId),
+    running: listRunningRuns(projectId),
+    waiting: listWaitingRuns(projectId),
+    recent: listRecentRuns(limit, projectId),
   });
 });
 

@@ -8,9 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { FileText, Plus, Pin } from "lucide-react";
+import { FileText, Plus, Pin, Link2 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
+import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 
 type Doc = { id: string; title: string; pinned: number; updated_at: number };
 
@@ -18,12 +20,15 @@ export default function DocsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [showNew, setShowNew] = useState(false);
+  const [showLinkExisting, setShowLinkExisting] = useState(false);
   const [newTitle, setNewTitle] = useState("");
+  const projectFilter = useProjectFilter();
+  const activeProjectId = useActiveProjectId();
 
   const { data: docs = [], isLoading: loading } = useQuery<Doc[]>({
-    queryKey: ["docs"],
+    queryKey: ["docs", projectFilter],
     queryFn: async () => {
-      const res = await fetch("/api/docs");
+      const res = await fetch(`/api/docs${projectFilter}`);
       if (!res.ok) return [];
       const data = await res.json();
       return Array.isArray(data) ? data : [];
@@ -41,6 +46,14 @@ export default function DocsPage() {
     });
     if (res.ok) {
       const doc = await res.json();
+      // Auto-link to active project
+      if (activeProjectId) {
+        await fetch(`/api/projects/${activeProjectId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "link", type: "doc", targetId: doc.id }),
+        });
+      }
       router.push(`/docs/${doc.id}?edit=1`);
     }
   }
@@ -61,7 +74,14 @@ export default function DocsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Docs</h1>
           <p className="text-sm text-muted-foreground mt-1">Shared knowledge linked to jobs.</p>
         </div>
-        <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Doc</Button>
+        <div className="flex gap-2">
+          {activeProjectId && (
+            <Button variant="outline" size="sm" onClick={() => setShowLinkExisting(true)}>
+              <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
+            </Button>
+          )}
+          <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Doc</Button>
+        </div>
       </div>
 
       {docs.length === 0 ? (
@@ -104,6 +124,19 @@ export default function DocsPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {activeProjectId && (
+        <ProjectLinkDialog
+          open={showLinkExisting}
+          onOpenChange={setShowLinkExisting}
+          projectId={activeProjectId}
+          type="doc"
+          queryKey="docs"
+          fetchAllUrl="/api/docs"
+          icon={FileText}
+          title="Add Existing Doc"
+        />
+      )}
     </div>
   );
 }

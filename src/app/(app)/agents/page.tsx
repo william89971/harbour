@@ -36,14 +36,19 @@ type CliTool = {
 };
 
 import { CLI_CONFIG } from "@/lib/cli-config";
+import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
+import { Link2 } from "lucide-react";
 
 export default function AgentsPage() {
   const queryClient = useQueryClient();
+  const projectFilter = useProjectFilter();
+  const activeProjectId = useActiveProjectId();
 
   const { data: agents = [], isLoading: loading } = useQuery<Agent[]>({
-    queryKey: ["agents"],
+    queryKey: ["agents", projectFilter],
     queryFn: async () => {
-      const res = await fetch("/api/agents");
+      const res = await fetch(`/api/agents${projectFilter}`);
       if (!res.ok) return [];
       return res.json();
     },
@@ -66,6 +71,7 @@ export default function AgentsPage() {
   const [selectedCli, setSelectedCli] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedThinking, setSelectedThinking] = useState<string>("");
+  const [showLinkExisting, setShowLinkExisting] = useState(false);
 
 
   async function loadCliTools() {
@@ -112,6 +118,14 @@ export default function AgentsPage() {
       setNewAgent({ id: data.id, name: data.name, apiKey: data.apiKey, type: agentType || "external" });
       setName("");
       setDescription("");
+      // Auto-link to active project if one is selected
+      if (activeProjectId) {
+        await fetch(`/api/projects/${activeProjectId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "link", type: "agent", targetId: data.id }),
+        });
+      }
       queryClient.invalidateQueries({ queryKey: ["agents"] });
     }
     setCreating(false);
@@ -168,9 +182,16 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
           <h1 className="text-2xl font-semibold tracking-tight">Agents</h1>
           <p className="text-sm text-muted-foreground mt-1">Your AI workforce.</p>
         </div>
-        <Button onClick={() => setShowCreate(true)} size="sm">
-          <Plus className="h-4 w-4 mr-1.5" /> New Agent
-        </Button>
+        <div className="flex gap-2">
+          {activeProjectId && (
+            <Button variant="outline" size="sm" onClick={() => setShowLinkExisting(true)}>
+              <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
+            </Button>
+          )}
+          <Button onClick={() => setShowCreate(true)} size="sm">
+            <Plus className="h-4 w-4 mr-1.5" /> New Agent
+          </Button>
+        </div>
       </div>
 
       {showRunnerBanner && (
@@ -352,6 +373,19 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
           )}
         </DialogContent>
       </Dialog>
+
+      {activeProjectId && (
+        <ProjectLinkDialog
+          open={showLinkExisting}
+          onOpenChange={setShowLinkExisting}
+          projectId={activeProjectId}
+          type="agent"
+          queryKey="agents"
+          fetchAllUrl="/api/agents"
+          icon={Bot}
+          title="Add Existing Agent"
+        />
+      )}
     </div>
   );
 }

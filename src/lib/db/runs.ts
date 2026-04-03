@@ -78,52 +78,56 @@ export function listRunsByAgent(agentId: string, limit = 50) {
   `).all(agentId, limit);
 }
 
-export function listScheduledRuns() {
+export function listScheduledRuns(projectId?: string) {
   const db = getDb();
+  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
     SELECT r.*, j.name as job_name, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN agents a ON r.agent_id = a.id
-    WHERE r.status = 'scheduled'
+    WHERE r.status = 'scheduled' ${projectFilter}
     ORDER BY r.scheduled_for ASC
-  `).all();
+  `).all(...(projectId ? [projectId] : []));
 }
 
-export function listRunningRuns() {
+export function listRunningRuns(projectId?: string) {
   const db = getDb();
+  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
     SELECT r.*, j.name as job_name, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN agents a ON r.agent_id = a.id
-    WHERE r.status = 'running'
+    WHERE r.status = 'running' ${projectFilter}
     ORDER BY r.updated_at DESC
-  `).all();
+  `).all(...(projectId ? [projectId] : []));
 }
 
-export function listWaitingRuns() {
+export function listWaitingRuns(projectId?: string) {
   const db = getDb();
+  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
     SELECT r.*, j.name as job_name, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN agents a ON r.agent_id = a.id
-    WHERE r.status IN ('waiting', 'pending')
+    WHERE r.status IN ('waiting', 'pending') ${projectFilter}
     ORDER BY r.updated_at ASC
-  `).all();
+  `).all(...(projectId ? [projectId] : []));
 }
 
-export function listRecentRuns(limit = 10) {
+export function listRecentRuns(limit = 10, projectId?: string) {
   const db = getDb();
+  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
     SELECT r.*, j.name as job_name, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN agents a ON r.agent_id = a.id
-    WHERE r.status IN ('done', 'failed')
+    WHERE r.status IN ('done', 'failed') ${projectFilter}
     ORDER BY r.completed_at DESC LIMIT ?
-  `).all(limit);
+  `).all(...(projectId ? [projectId, limit] : [limit]));
 }
 
 // Activity log

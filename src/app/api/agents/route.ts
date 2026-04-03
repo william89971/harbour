@@ -3,8 +3,9 @@ import { withAuth, withUserAuth } from "@/lib/auth";
 import { listAgents, createAgent } from "@/lib/db/queries";
 import { saveRunnerConfig } from "@/lib/runners";
 
-export const GET = withAuth(async () => {
-  return NextResponse.json(listAgents());
+export const GET = withAuth(async (req) => {
+  const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
+  return NextResponse.json(listAgents(projectId));
 });
 
 export const POST = withUserAuth(async (req) => {

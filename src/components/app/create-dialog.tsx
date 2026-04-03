@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { SchedulePicker, parseSchedule, serializeSchedule } from "@/components/app/schedule-picker";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { Pin, FileText, KeyRound, Plus, X } from "lucide-react";
+import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 
 type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null };
 type Doc = { id: string; title: string; pinned: number };
@@ -129,6 +130,7 @@ export function CreateDialog({
   defaultTab?: "run" | "job";
 }) {
   const queryClient = useQueryClient();
+  const activeProjectId = useActiveProjectId();
 
   const [tab, setTab] = useState<"run" | "job">(defaultTab);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -236,6 +238,18 @@ export function CreateDialog({
     });
     if (!res.ok) { alert("Failed to create run"); return; }
 
+    // Auto-link the backing job to the active project
+    if (activeProjectId) {
+      const data = await res.json();
+      if (data.jobId) {
+        await fetch(`/api/projects/${activeProjectId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "link", type: "job", targetId: data.jobId }),
+        });
+      }
+    }
+
     handleClose(false);
     queryClient.invalidateQueries({ queryKey: ["runs"] });
   }
@@ -260,6 +274,18 @@ export function CreateDialog({
       }),
     });
     if (!res.ok) { alert("Failed to create job"); return; }
+
+    // Auto-link the job to the active project
+    if (activeProjectId) {
+      const data = await res.json();
+      if (data.id) {
+        await fetch(`/api/projects/${activeProjectId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "link", type: "job", targetId: data.id }),
+        });
+      }
+    }
 
     handleClose(false);
     queryClient.invalidateQueries({ queryKey: ["jobs"] });

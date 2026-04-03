@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Anchor, LogOut } from "lucide-react";
 
-import { AppContext, type User } from "./app-context";
+import { AppContext, type User, type Project } from "./app-context";
 import { ThemeToggle } from "./theme-toggle";
 import { NavLinks } from "./nav-links";
+import { ProjectSwitcher } from "./project-switcher";
 import { MobileBottomNav } from "./mobile-nav";
 
 export { useApp } from "./app-context";
@@ -33,6 +34,41 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }).catch(() => { window.location.href = "/login"; });
   }, [router]);
 
+  // Active project (persisted in localStorage)
+  const [activeProjectId, setActiveProjectIdState] = useState<string | null>(null);
+  const [projectStateLoaded, setProjectStateLoaded] = useState(false);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("harbour_active_project");
+    if (stored) setActiveProjectIdState(stored);
+    setProjectStateLoaded(true);
+  }, []);
+
+  function setActiveProjectId(id: string | null) {
+    setActiveProjectIdState(id);
+    if (id) localStorage.setItem("harbour_active_project", id);
+    else localStorage.removeItem("harbour_active_project");
+  }
+
+  // Fetch projects
+  const { data: projects = [] } = useQuery<Project[]>({
+    queryKey: ["projects"],
+    queryFn: async () => {
+      const res = await fetch("/api/projects");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    refetchInterval: 10000,
+    enabled: !!user,
+  });
+
+  // If stored project no longer exists, clear it
+  useEffect(() => {
+    if (projectStateLoaded && activeProjectId && projects.length > 0 && !projects.some(p => p.id === activeProjectId)) {
+      setActiveProjectId(null);
+    }
+  }, [projects, activeProjectId, projectStateLoaded]);
+
   // Fetch system timezone
   const { data: timezone = Intl.DateTimeFormat().resolvedOptions().timeZone } = useQuery({
     queryKey: ["settings", "timezone"],
@@ -45,11 +81,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     enabled: !!user,
   });
 
-  // Poll waiting runs count
+  // Poll waiting runs count (project-filtered)
+  const waitingProjectParam = activeProjectId ? `&projectId=${activeProjectId}` : "";
   const { data: waitingCount = 0 } = useQuery({
-    queryKey: ["runs", "waiting-count"],
+    queryKey: ["runs", "waiting-count", activeProjectId],
     queryFn: async () => {
-      const res = await fetch("/api/runs?filter=waiting");
+      const res = await fetch(`/api/runs?filter=waiting${waitingProjectParam}`);
       if (!res.ok) return 0;
       const data = await res.json();
       return Array.isArray(data) ? data.length : 0;
@@ -76,6 +113,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <Separator />
 
+      <div className="px-2 py-2">
+        <ProjectSwitcher />
+      </div>
+      <Separator />
+
       <div className="flex-1 overflow-y-auto py-2">
         <NavLinks />
       </div>
@@ -97,7 +139,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <AppContext.Provider value={{ user, waitingCount, timezone }}>
+    <AppContext.Provider value={{ user, waitingCount, timezone, projects, activeProjectId, setActiveProjectId }}>
       <div className="flex h-dvh standalone:h-screen">
         <aside className="hidden w-56 shrink-0 border-r bg-sidebar md:block">
           {sidebar}
@@ -109,7 +151,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary shrink-0">
               <Anchor className="h-4 w-4 text-primary-foreground" />
             </div>
-            <span className="text-sm font-semibold tracking-tight flex-1">Harbour</span>
+            <div className="flex-1 min-w-0">
+              <ProjectSwitcher variant="mobile" />
+            </div>
             <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={handleLogout}>
               <LogOut className="h-4 w-4" />
             </Button>

@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/app/empty-state";
 import { CreateDialog } from "@/components/app/create-dialog";
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
+import { useProjectFilter } from "@/lib/hooks/use-project-filter";
 
 type Run = {
   id: string; status: string; job_name: string; agent_name: string;
@@ -36,6 +37,7 @@ function RunRow({ run }: { run: Run }) {
 
 export default function RunsPage() {
   const [showCreate, setShowCreate] = useState(false);
+  const projectFilter = useProjectFilter();
 
   const { data: runsData, isLoading: loading } = useQuery<{
     scheduled?: Run[];
@@ -43,9 +45,9 @@ export default function RunsPage() {
     waiting?: Run[];
     recent?: Run[];
   }>({
-    queryKey: ["runs"],
+    queryKey: ["runs", projectFilter],
     queryFn: async () => {
-      const res = await fetch("/api/runs");
+      const res = await fetch(`/api/runs${projectFilter}`);
       return res.json();
     },
     refetchInterval: 5000,

@@ -19,8 +19,15 @@ export function getEnvVarById(id: string) {
   ).get(id) as any || null;
 }
 
-export function listEnvVars() {
+export function listEnvVars(projectId?: string) {
   const db = getDb();
+  if (projectId) {
+    return db.prepare(
+      `SELECT id, name, pinned, created_at, updated_at FROM env_vars
+       WHERE id IN (SELECT env_var_id FROM project_env_vars WHERE project_id = ?)
+       ORDER BY pinned DESC, name ASC`
+    ).all(projectId);
+  }
   return db.prepare(
     `SELECT id, name, pinned, created_at, updated_at FROM env_vars ORDER BY pinned DESC, name ASC`
   ).all();
