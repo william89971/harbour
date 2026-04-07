@@ -2,6 +2,7 @@ import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
+import { listAttachmentsByRun } from "./attachments";
 
 export function createRun(jobId: string, agentId: string) {
   const db = getDb();
@@ -365,6 +366,9 @@ function buildRunPayload(runId: string) {
   // Decrypt env vars for this job
   const env = getDecryptedEnvVarsForJob(run.job_id);
 
+  // Run attachments (raw rows; the route serializer adds absolute URLs)
+  const attachments = listAttachmentsByRun(run.id);
+
   return {
     run: { id: run.id, status: run.status, activity: run.activity },
     job: {
@@ -379,6 +383,7 @@ function buildRunPayload(runId: string) {
     docs,
     data,
     env,
+    attachments,
   };
 }
 

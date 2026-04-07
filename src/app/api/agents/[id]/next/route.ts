@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getAgentById, touchAgentPolled, getAgentNextRun, peekAgentNext } from "@/lib/db/queries";
+import { getAgentById, touchAgentPolled, getAgentNextRun, peekAgentNext, RunAttachment } from "@/lib/db/queries";
+import { serializeAttachment } from "@/lib/attachments-serialize";
 
 function buildApiSection(req: NextRequest, runId: string) {
   const base = `${req.nextUrl.protocol}//${req.nextUrl.host}`;
@@ -9,6 +10,7 @@ function buildApiSection(req: NextRequest, runId: string) {
     endpoints: {
       update_status: `PUT ${base}/api/runs/${runId}/status`,
       post_activity: `POST ${base}/api/runs/${runId}/activity`,
+      upload_attachment: `POST ${base}/api/runs/${runId}/attachments`,
       create_doc: `POST ${base}/api/docs`,
       update_doc: `PUT ${base}/api/docs/:id`,
       create_database: `POST ${base}/api/databases`,
@@ -20,6 +22,7 @@ function buildApiSection(req: NextRequest, runId: string) {
     notes: [
       "You MUST set a final status (done/failed) when finished, or waiting if you need human input.",
       "Post activity messages to log progress — these are visible on the dashboard.",
+      "Attachments belong to the run thread — files (multipart) or video URL embeds (JSON {url}).",
       "Full API spec available at the guide endpoint.",
     ],
   };
@@ -46,8 +49,10 @@ export const GET = withAuth(async (req, auth, { params }) => {
     return NextResponse.json(null);
   }
 
+  const base = `${req.nextUrl.protocol}//${req.nextUrl.host}`;
   return NextResponse.json({
     ...payload,
+    attachments: (payload.attachments as RunAttachment[]).map(a => serializeAttachment(a, base)),
     api: buildApiSection(req, payload.run.id),
   });
 });

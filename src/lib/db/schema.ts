@@ -1,15 +1,41 @@
 import Database from "better-sqlite3";
+import fs from "fs";
 import path from "path";
 import { normalizeSchedule } from "../schedule";
 import { encrypt } from "../encryption";
-
-const DB_PATH = process.env.HARBOUR_DB_PATH || path.join(process.cwd(), "harbour.db");
+import { dbPath, harbourHome, ensureDir } from "../paths";
 
 let _db: Database.Database | null = null;
 
+/**
+ * One-time migration: if a legacy ./harbour.db exists in the cwd and the
+ * default ~/.harbour/harbour.db doesn't, copy it (plus its WAL sidecars)
+ * into the new home so the user can back up a single directory.
+ *
+ * Skipped when HARBOUR_DB_PATH is explicitly set.
+ */
+function migrateLegacyDbIfNeeded() {
+  if (process.env.HARBOUR_DB_PATH) return;
+  const target = dbPath();
+  if (fs.existsSync(target)) return;
+
+  const legacy = path.join(process.cwd(), "harbour.db");
+  if (!fs.existsSync(legacy)) return;
+  if (path.resolve(legacy) === path.resolve(target)) return;
+
+  ensureDir(path.dirname(target));
+  for (const ext of ["", "-shm", "-wal"]) {
+    const src = legacy + ext;
+    if (fs.existsSync(src)) fs.copyFileSync(src, target + ext);
+  }
+  console.log(`[harbour] Migrated ${legacy} → ${target} (original preserved)`);
+}
+
 export function getDb(): Database.Database {
   if (!_db) {
-    _db = new Database(DB_PATH);
+    ensureDir(harbourHome());
+    migrateLegacyDbIfNeeded();
+    _db = new Database(dbPath());
     _db.pragma("journal_mode = WAL");
     _db.pragma("foreign_keys = ON");
     initializeSchema(_db);
@@ -173,6 +199,28 @@ export function initializeSchema(db: Database.Database) {
       PRIMARY KEY (job_id, env_var_id)
     );
 
+    -- Run attachments: files uploaded to a run, or URL embeds (Loom/YouTube/Vimeo)
+    CREATE TABLE IF NOT EXISTS run_attachments (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      activity_id TEXT REFERENCES run_activity(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('file','embed')),
+      -- file kind:
+      filename TEXT,
+      storage_path TEXT,
+      mime_type TEXT,
+      size_bytes INTEGER,
+      -- embed kind:
+      url TEXT,
+      embed_provider TEXT,
+      -- both:
+      title TEXT,
+      uploaded_by_type TEXT CHECK(uploaded_by_type IN ('user','agent')),
+      uploaded_by_id TEXT,
+      uploaded_by_name TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- Run output: raw streaming events from CLI agent execution
     CREATE TABLE IF NOT EXISTS run_output (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -231,6 +279,8 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_output_run ON run_output(run_id);
 
+    CREATE INDEX IF NOT EXISTS idx_run_attachments_run ON run_attachments(run_id);
+    CREATE INDEX IF NOT EXISTS idx_run_attachments_activity ON run_attachments(activity_id);
     CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id);
     CREATE INDEX IF NOT EXISTS idx_database_migrations_db ON database_migrations(database_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
