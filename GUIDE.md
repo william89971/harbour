@@ -111,11 +111,25 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     "GITHUB_TOKEN": "ghp_...",
     "FIGMA_API_KEY": "figd_..."
   },
+  "attachments": [
+    {
+      "id": "uuid", "kind": "file",
+      "filename": "screenshot.png", "mime_type": "image/png", "size_bytes": 124000,
+      "url": "https://your-harbour.example.com/api/runs/<run_id>/attachments/<id>/file",
+      "title": null, "uploaded_by_type": "user", "uploaded_by_name": "Gavin"
+    },
+    {
+      "id": "uuid", "kind": "embed", "embed_provider": "loom",
+      "url": "https://www.loom.com/share/...", "title": "Walkthrough",
+      "uploaded_by_type": "user", "uploaded_by_name": "Gavin"
+    }
+  ],
   "api": {
     "base_url": "https://your-harbour.example.com",
     "endpoints": {
       "update_status": "PUT https://your-harbour.example.com/api/runs/<run_id>/status",
       "post_activity": "POST https://your-harbour.example.com/api/runs/<run_id>/activity",
+      "upload_attachment": "POST https://your-harbour.example.com/api/runs/<run_id>/attachments",
       "create_doc": "POST https://your-harbour.example.com/api/docs",
       "update_doc": "PUT https://your-harbour.example.com/api/docs/:id",
       "create_database": "POST https://your-harbour.example.com/api/databases",
@@ -127,15 +141,18 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     "notes": [
       "You MUST set a final status (done/failed) when finished, or waiting if you need human input.",
       "Post activity messages to log progress — these are visible on the dashboard.",
+      "Attachments belong to the run thread — files (multipart) or video URL embeds (JSON {url}).",
       "Full API spec available at the guide endpoint."
     ]
   }
 }
 ```
 
-Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides), referenced docs, linked database rows (most recent 100 per table), decrypted env vars, and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, and manage docs and databases — no need to construct URLs yourself.
+Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides), referenced docs, linked database rows (most recent 100 per table), decrypted env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
 
 The `env` field contains decrypted environment variables linked to the job. Use these for API keys, tokens, and other credentials needed during the run.
+
+The `attachments` field is the list of files and URL embeds attached to the run. Files have a download `url` that you can fetch with the same Bearer token. Embeds carry the source URL (Loom, YouTube, Vimeo) — humans see these as inline iframes on the dashboard.
 
 ### Peek (Read-Only Check)
 
@@ -189,10 +206,47 @@ When a run transitions to `done`, `failed`, or `skipped`, Harbour automatically 
 POST /api/runs/:id/activity
 Content-Type: application/json
 
-{ "content": "Found 3 new mentions. Processing..." }
+{ "content": "Found 3 new mentions. Processing...", "attachment_ids": ["uuid", ...] }
 ```
 
 Activity entries support markdown. They form the visible record of what happened during the run.
+
+`attachment_ids` is optional. To attach files or embeds to a comment, upload them first via `POST /api/runs/:id/attachments`, then pass the returned ids in this field. Comments may have empty `content` if they only carry attachments.
+
+### Attachments
+
+Attach files (screenshots, PDFs, exports) or video URL embeds (Loom, YouTube, Vimeo) to a run. Both kinds appear in the activity thread on the dashboard and in the `attachments` array of `/next`.
+
+**Upload a file (multipart/form-data):**
+
+```
+POST /api/runs/:id/attachments
+Content-Type: multipart/form-data; boundary=...
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="screenshot.png"
+Content-Type: image/png
+
+<binary>
+--boundary--
+```
+
+Multiple `file` parts in one request are supported. Per-file limit is set by `HARBOUR_MAX_UPLOAD_MB` (default 100MB). Returns an array of attachment records.
+
+**Attach an embed URL (JSON):**
+
+```
+POST /api/runs/:id/attachments
+Content-Type: application/json
+
+{ "url": "https://www.loom.com/share/abc123", "title": "Walkthrough" }
+```
+
+The provider (`loom`, `youtube`, `vimeo`, `generic`) is detected from the URL.
+
+**List attachments:** `GET /api/runs/:id/attachments`
+**Delete an attachment:** `DELETE /api/runs/:id/attachments/:aid`
+**Download a file:** `GET /api/runs/:id/attachments/:aid/file` — same Bearer token works.
 
 **The waiting flow:**
 

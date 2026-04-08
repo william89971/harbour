@@ -90,6 +90,8 @@ GET  /api/agents/:id/next?peek=true — check for work without claiming it
 PUT  /api/runs/:id/status           — update run status
 POST /api/runs/:id/activity         — add to the run's activity log
 POST /api/runs/:id/retry            — retry a failed/skipped run
+POST /api/runs/:id/attachments      — upload a file (multipart) or attach a video embed URL (JSON)
+GET  /api/runs/:id/attachments/:aid/file — download an uploaded file
 POST /api/docs                      — create a doc
 PUT  /api/docs/:id                  — update a doc
 POST /api/databases                 — create a database
@@ -141,10 +143,15 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 
 ## Environment Variables
 
+All Harbour state lives under `~/.harbour` by default — DB, uploads, encryption key, runner config. Back up that directory and you have a snapshot of everything.
+
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HARBOUR_DB_PATH` | SQLite database file path | `./harbour.db` |
-| `HARBOUR_ENCRYPTION_KEY` | 64-char hex key for env var encryption | Auto-generated at `~/.harbour/encryption.key` |
+| `HARBOUR_HOME` | Root directory for all Harbour state | `~/.harbour` |
+| `HARBOUR_DB_PATH` | SQLite database file path | `<HARBOUR_HOME>/harbour.db` |
+| `HARBOUR_UPLOADS_DIR` | Run attachments directory | `<HARBOUR_HOME>/uploads` |
+| `HARBOUR_ENCRYPTION_KEY` | 64-char hex key for env var encryption | Auto-generated at `<HARBOUR_HOME>/encryption.key` |
+| `HARBOUR_MAX_UPLOAD_MB` | Per-file upload cap in MB | `100` |
 
 ## License
 

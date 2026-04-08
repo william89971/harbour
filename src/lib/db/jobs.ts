@@ -4,6 +4,7 @@ import { getNextRunTime } from "../schedule";
 import { listPinnedDocIds } from "./docs";
 import { listPinnedEnvVarIds } from "./env-vars";
 import { getTimezone } from "./settings";
+import { deleteRunAttachmentsDir } from "./attachments";
 
 export function createJob(agentId: string, data: {
   name: string;
@@ -170,7 +171,9 @@ export function updateJob(id: string, data: {
 
 export function deleteJob(id: string) {
   const db = getDb();
+  const runIds = db.prepare(`SELECT id FROM runs WHERE job_id = ?`).all(id) as { id: string }[];
   db.prepare(`DELETE FROM jobs WHERE id = ?`).run(id);
+  for (const r of runIds) deleteRunAttachmentsDir(r.id);
 }
 
 export function createOneOffRun(agentId: string, data: {

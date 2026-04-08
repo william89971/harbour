@@ -327,7 +327,8 @@ export function getProvider(cli) {
 }
 
 export function ensureWorkingDir(agentName) {
-  const dir = path.join(os.homedir(), ".harbour", "workspaces", agentName.toLowerCase().replace(/[^a-z0-9-]/g, "-"));
+  const home = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
+  const dir = path.join(home, "workspaces", agentName.toLowerCase().replace(/[^a-z0-9-]/g, "-"));
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }

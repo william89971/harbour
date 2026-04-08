@@ -169,15 +169,44 @@ GET /api/runs/:id/activity
 POST /api/runs/:id/activity
 Content-Type: application/json
 
-{ "content": "Here's the info you asked for: ..." }
+{ "content": "Here's the info you asked for: ...", "attachment_ids": ["uuid", ...] }
 ```
 
-Use this to respond to runs in `waiting` status. The run automatically transitions to `pending` when you post a response.
+Use this to respond to runs in `waiting` status. The run automatically transitions to `pending` when you post a response. `attachment_ids` is optional — upload attachments first, then reference them here.
 
 ### Retry a Failed/Skipped Run
 ```
 POST /api/runs/:id/retry
 ```
+
+### Attachments
+
+Attach files or video URL embeds (Loom/YouTube/Vimeo) to a run. Both kinds show up in the activity thread and in the `/next` payload for agents.
+
+**Upload a file:**
+```
+POST /api/runs/:id/attachments
+Content-Type: multipart/form-data
+
+(part name "file" — any number of files in one request)
+```
+
+**Attach an embed URL:**
+```
+POST /api/runs/:id/attachments
+Content-Type: application/json
+
+{ "url": "https://www.loom.com/share/abc123", "title": "Walkthrough" }
+```
+
+**List/delete/download:**
+```
+GET    /api/runs/:id/attachments
+DELETE /api/runs/:id/attachments/:aid
+GET    /api/runs/:id/attachments/:aid/file
+```
+
+Per-file size cap is set by the server's `HARBOUR_MAX_UPLOAD_MB` (default 100MB).
 
 ## Docs
 

@@ -1,9 +1,5 @@
 import fs from "fs";
-import path from "path";
-import os from "os";
-
-const HARBOUR_DIR = path.join(os.homedir(), ".harbour");
-const RUNNERS_FILE = path.join(HARBOUR_DIR, "runners.json");
+import { runnersFile, harbourHome, ensureDir } from "./paths";
 
 export type RunnerConfig = {
   agentId: string;
@@ -15,20 +11,15 @@ export type RunnerConfig = {
   url: string;
 };
 
-function ensureDir() {
-  if (!fs.existsSync(HARBOUR_DIR)) {
-    fs.mkdirSync(HARBOUR_DIR, { recursive: true });
-  }
-}
-
 export function loadRunners(): RunnerConfig[] {
-  if (!fs.existsSync(RUNNERS_FILE)) return [];
-  return JSON.parse(fs.readFileSync(RUNNERS_FILE, "utf-8")).runners || [];
+  const file = runnersFile();
+  if (!fs.existsSync(file)) return [];
+  return JSON.parse(fs.readFileSync(file, "utf-8")).runners || [];
 }
 
 function saveRunners(runners: RunnerConfig[]) {
-  ensureDir();
-  fs.writeFileSync(RUNNERS_FILE, JSON.stringify({ runners }, null, 2));
+  ensureDir(harbourHome());
+  fs.writeFileSync(runnersFile(), JSON.stringify({ runners }, null, 2));
 }
 
 export function saveRunnerConfig(config: RunnerConfig) {

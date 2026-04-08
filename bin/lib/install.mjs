@@ -9,8 +9,9 @@ const harbourBin = path.resolve(__dirname, "..", "harbour.mjs");
 
 const PLIST_LABEL = "com.harbour.agent-runner";
 const PLIST_PATH = path.join(os.homedir(), "Library", "LaunchAgents", `${PLIST_LABEL}.plist`);
-const LOG_PATH = path.join(os.homedir(), ".harbour", "runner.log");
-const ERR_LOG_PATH = path.join(os.homedir(), ".harbour", "runner.err.log");
+const HARBOUR_DIR = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
+const LOG_PATH = path.join(HARBOUR_DIR, "runner.log");
+const ERR_LOG_PATH = path.join(HARBOUR_DIR, "runner.err.log");
 
 // Resolve node path
 let nodePath;

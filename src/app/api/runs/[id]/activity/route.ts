@@ -1,8 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getRunById, addRunActivity, listRunActivity, updateRunStatus } from "@/lib/db/queries";
+import {
+  getRunById,
+  addRunActivity,
+  listRunActivity,
+  updateRunStatus,
+  linkAttachmentsToActivity,
+} from "@/lib/db/queries";
 
-export const GET = withAuth(async (req, auth, { params }) => {
+export const GET = withAuth(async (_req, auth, { params }) => {
   const { id } = await params;
   const run = getRunById(id);
   if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
@@ -18,26 +24,24 @@ export const POST = withAuth(async (req, auth, { params }) => {
   const ownerError = requireAgentOwnership(auth, run.agent_id);
   if (ownerError) return ownerError;
 
-  const body = await req.json();
-  if (!body.content) {
-    return NextResponse.json({ error: "content is required" }, { status: 400 });
+  const body = await req.json() as { content?: string; attachment_ids?: string[] };
+  const content = (body.content ?? "").trim();
+  const attachmentIds = Array.isArray(body.attachment_ids) ? body.attachment_ids : [];
+
+  // Allow empty content if there are attachments — the attachment is the message
+  if (!content && attachmentIds.length === 0) {
+    return NextResponse.json({ error: "content or attachment_ids required" }, { status: 400 });
   }
 
-  let authorType: string;
-  let authorId: string | null;
-  let authorName: string;
+  const authorType = auth.type === "user" ? "user" : "agent";
+  const authorId = auth.type === "user" ? auth.userId : auth.agentId;
+  const authorName = auth.type === "user" ? auth.displayName : auth.agentName;
 
-  if (auth.type === "user") {
-    authorType = "user";
-    authorId = auth.userId;
-    authorName = auth.displayName;
-  } else {
-    authorType = "agent";
-    authorId = auth.agentId;
-    authorName = auth.agentName;
+  const entry = addRunActivity(id, authorType, authorId, authorName, content);
+
+  if (attachmentIds.length > 0) {
+    linkAttachmentsToActivity(attachmentIds, entry.id, id);
   }
-
-  const entry = addRunActivity(id, authorType, authorId, authorName, body.content);
 
   // When a user responds, move to pending (ready for agent pickup)
   if (authorType === "user" && ["waiting", "done", "failed"].includes(run.status)) {

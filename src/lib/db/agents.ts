@@ -1,6 +1,7 @@
 import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
+import { deleteRunAttachmentsDir } from "./attachments";
 
 function generateApiKey(): string {
   return "hbr_" + crypto.randomBytes(32).toString("hex");
@@ -87,7 +88,10 @@ export function updateAgent(id: string, data: { name?: string; description?: str
 
 export function deleteAgent(id: string) {
   const db = getDb();
+  // Capture run ids first so we can clean their on-disk attachment dirs after cascade
+  const runIds = db.prepare(`SELECT id FROM runs WHERE agent_id = ?`).all(id) as { id: string }[];
   db.prepare(`DELETE FROM agents WHERE id = ?`).run(id);
+  for (const r of runIds) deleteRunAttachmentsDir(r.id);
 }
 
 export function touchAgentPolled(id: string) {

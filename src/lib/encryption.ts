@@ -1,21 +1,12 @@
 import crypto from "crypto";
 import fs from "fs";
-import path from "path";
-import os from "os";
+import { encryptionKeyPath, harbourHome, ensureDir } from "./paths";
 
-const KEY_FILE = path.join(os.homedir(), ".harbour", "encryption.key");
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 
 let _key: Buffer | null = null;
-
-function ensureDir() {
-  const dir = path.dirname(KEY_FILE);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
 
 function loadOrCreateKey(): Buffer {
   if (_key) return _key;
@@ -29,15 +20,16 @@ function loadOrCreateKey(): Buffer {
   }
 
   // Check key file
-  if (fs.existsSync(KEY_FILE)) {
-    _key = Buffer.from(fs.readFileSync(KEY_FILE, "utf-8").trim(), "hex");
+  const keyFile = encryptionKeyPath();
+  if (fs.existsSync(keyFile)) {
+    _key = Buffer.from(fs.readFileSync(keyFile, "utf-8").trim(), "hex");
     return _key;
   }
 
   // Generate new key
-  ensureDir();
+  ensureDir(harbourHome());
   _key = crypto.randomBytes(32);
-  fs.writeFileSync(KEY_FILE, _key.toString("hex"), { mode: 0o600 });
+  fs.writeFileSync(keyFile, _key.toString("hex"), { mode: 0o600 });
   return _key;
 }
 

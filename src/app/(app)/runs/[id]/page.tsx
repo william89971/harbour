@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -14,6 +14,11 @@ import { BackLink } from "@/components/app/back-link";
 import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { StatusBadge } from "@/components/app/run-status";
+import { AttachmentComposer, type AttachmentComposerHandle } from "@/components/app/attachment-composer";
+import { AttachmentList } from "@/components/app/attachment-display";
+import type { SerializedAttachment } from "@/lib/attachments-serialize";
+import { detectEmbedProvider } from "@/lib/upload-client";
+import { cn } from "@/lib/utils";
 
 type Activity = {
   id: string; run_id: string; author_type: string; author_id: string | null;
@@ -25,6 +30,7 @@ type Run = {
   job_name: string; agent_name: string; agent_type: string; one_off: number;
   created_at: number; updated_at: number; completed_at: number | null;
   activity: Activity[];
+  attachments: SerializedAttachment[];
 };
 
 type OutputEvent = {
@@ -205,6 +211,10 @@ export default function RunDetailPage() {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [stagedIds, setStagedIds] = useState<string[]>([]);
+  const composerRef = useRef<AttachmentComposerHandle>(null);
+  const onStagedIdsChange = useCallback((ids: string[]) => setStagedIds(ids), []);
 
   const { data: run = null, isLoading: loading } = useQuery<Run | null>({
     queryKey: ["runs", id],
@@ -218,18 +228,49 @@ export default function RunDetailPage() {
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
-    if (!message.trim()) return;
+    const attachmentIds = composerRef.current?.drain() ?? [];
+    const trimmed = message.trim();
+    if (!trimmed && attachmentIds.length === 0) return;
+
     setSending(true);
     const res = await fetch(`/api/runs/${id}/activity`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: message }),
+      body: JSON.stringify({ content: trimmed, attachment_ids: attachmentIds }),
     });
     if (res.ok) {
       setMessage("");
       queryClient.invalidateQueries({ queryKey: ["runs", id] });
     }
     setSending(false);
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    // Pasted image → upload as attachment
+    for (const item of Array.from(e.clipboardData.items)) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          composerRef.current?.addFiles([file]);
+          return;
+        }
+      }
+    }
+    // Pasted embed URL → convert to embed attachment
+    const text = e.clipboardData.getData("text").trim();
+    if (text && !text.includes("\n") && detectEmbedProvider(text)) {
+      e.preventDefault();
+      composerRef.current?.addEmbedUrl(text);
+    }
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    if (e.dataTransfer.files.length > 0) {
+      composerRef.current?.addFiles(e.dataTransfer.files);
+    }
   }
 
   async function handleRetry() {
@@ -284,40 +325,73 @@ export default function RunDetailPage() {
       <div className="space-y-1">
         <SectionHeader>Activity</SectionHeader>
         <div className="space-y-3">
-          {run.activity.length === 0 ? (
+          {run.activity.length === 0 && (run.attachments?.length ?? 0) === 0 ? (
             <EmptyState>No activity yet.</EmptyState>
           ) : (
-            run.activity.map(entry => (
-              <div key={entry.id} className={`flex gap-3 ${entry.author_type === "system" ? "opacity-60" : ""}`}>
-                <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full mt-0.5 ${
-                  entry.author_type === "agent" ? "bg-primary/10 text-primary" :
-                  entry.author_type === "user" ? "bg-blue-500/10 text-blue-600 dark:text-blue-400" :
-                  "bg-muted text-muted-foreground"
-                }`}>
-                  <AuthorIcon type={entry.author_type} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{entry.author_name}</span>
-                    <span className="text-xs text-muted-foreground">{timeAgo(entry.created_at)}</span>
+            run.activity.map(entry => {
+              const entryAttachments = (run.attachments ?? []).filter(a => a.activity_id === entry.id);
+              return (
+                <div key={entry.id} className={`flex gap-3 ${entry.author_type === "system" ? "opacity-60" : ""}`}>
+                  <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full mt-0.5 ${
+                    entry.author_type === "agent" ? "bg-primary/10 text-primary" :
+                    entry.author_type === "user" ? "bg-blue-500/10 text-blue-600 dark:text-blue-400" :
+                    "bg-muted text-muted-foreground"
+                  }`}>
+                    <AuthorIcon type={entry.author_type} />
                   </div>
-                  <div className="prose prose-sm dark:prose-invert max-w-none mt-0.5 text-sm">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.content}</ReactMarkdown>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{entry.author_name}</span>
+                      <span className="text-xs text-muted-foreground">{timeAgo(entry.created_at)}</span>
+                    </div>
+                    {entry.content && (
+                      <div className="prose prose-sm dark:prose-invert max-w-none mt-0.5 text-sm">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.content}</ReactMarkdown>
+                      </div>
+                    )}
+                    <AttachmentList items={entryAttachments} />
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
+        {/* Standalone attachments not tied to any activity entry.
+            Filter out IDs still staged in the composer so they don't flicker
+            here while waiting to be attached to a comment. */}
+        {(() => {
+          const stagedSet = new Set(stagedIds);
+          const orphans = (run.attachments ?? []).filter(a => !a.activity_id && !stagedSet.has(a.id));
+          if (orphans.length === 0) return null;
+          return (
+            <div className="pt-3">
+              <SectionHeader>Attachments</SectionHeader>
+              <AttachmentList items={orphans} />
+            </div>
+          );
+        })()}
       </div>
 
       {/* Reply Form (waiting, pending, done, failed — but not running) */}
       {(run.status !== "running" && run.status !== "scheduled" && run.status !== "skipped") && (
-        <form onSubmit={handleSend} className="space-y-2">
+        <form
+          onSubmit={handleSend}
+          className={cn(
+            "space-y-2 rounded-lg border border-transparent transition-colors",
+            dragging && "border-primary/60 bg-primary/5",
+          )}
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={e => {
+            // Only clear when leaving the form entirely, not crossing child nodes
+            if (e.currentTarget === e.target) setDragging(false);
+          }}
+          onDrop={handleDrop}
+        >
           <Textarea
             value={message}
             onChange={e => setMessage(e.target.value)}
-            placeholder="Type a response..."
+            onPaste={handlePaste}
+            placeholder="Type a response — or drop / paste files & embed URLs..."
             rows={3}
             onKeyDown={e => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -326,8 +400,9 @@ export default function RunDetailPage() {
               }
             }}
           />
+          <AttachmentComposer ref={composerRef} runId={id} onStagedIdsChange={onStagedIdsChange} />
           <div className="flex justify-end">
-            <Button type="submit" size="sm" disabled={sending || !message.trim()}>
+            <Button type="submit" size="sm" disabled={sending}>
               <Send className="h-3.5 w-3.5 mr-1.5" /> Send
             </Button>
           </div>

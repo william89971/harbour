@@ -8,3 +8,4 @@ export * from "./env-vars";
 export * from "./settings";
 export * from "./projects";
 export * from "./admin-api-keys";
+export * from "./attachments";

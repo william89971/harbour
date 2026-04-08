@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
-const HARBOUR_DIR = path.join(os.homedir(), ".harbour");
+const HARBOUR_DIR = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
 const RUNNERS_FILE = path.join(HARBOUR_DIR, "runners.json");
 const SESSIONS_FILE = path.join(HARBOUR_DIR, "sessions.json");
 
