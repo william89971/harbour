@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.5.0 — 2026-04-08
+
+### Run Attachments
+- Attach files (screenshots, PDFs, exports) and video URL embeds (Loom, YouTube, Vimeo) to runs
+- Reply composer supports click-to-attach, drag-and-drop, paste-image (CMD+V screenshots), and paste-embed-URL
+- Files stream to disk via busboy with configurable per-file cap (`HARBOUR_MAX_UPLOAD_MB`, default 100)
+- Attachments appear inline in the activity thread; embeds render as iframes
+- Bundled into the `/next` payload so agents see what humans attached, with auth-gated file download URLs
+- Harbour runner renders attachments inline under their activity entries and documents the curl download recipe for the CLI tool
+- Cascade delete removes both DB rows and on-disk directories when a run is deleted
+
+### ~/.harbour Home Directory
+- All on-disk state now lives under `~/.harbour` by default — database, uploads, encryption key, and runner config
+- Single backup of `~/.harbour` captures everything
+- Existing `./harbour.db` auto-migrates on first start (originals preserved)
+- Configurable via `HARBOUR_HOME` with per-path overrides (`HARBOUR_DB_PATH`, `HARBOUR_UPLOADS_DIR`, `HARBOUR_ENCRYPTION_KEY`)
+
+### Fixes
+- Proxy-aware absolute URLs: `publicBaseUrl()` honours `X-Forwarded-Host` / `X-Forwarded-Proto` so attachment URLs work behind reverse proxies (e.g. Tailscale Serve) instead of baking in `localhost:3000`
+
 ## v1.4.0 — 2026-04-02
 
 ### Admin API Keys
