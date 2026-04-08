@@ -22,6 +22,7 @@ async function apiCall(url, apiKey, method = "GET", body = null) {
 function buildApiPrompt(api, apiKey) {
   const runStatusUrl = api.endpoints.update_status.replace("PUT ", "");
   const activityUrl = api.endpoints.post_activity.replace("POST ", "");
+  const uploadUrl = api.endpoints.upload_attachment?.replace("POST ", "") || "";
   const guideUrl = api.endpoints.guide.replace("GET ", "");
 
   return `## Harbour API
@@ -43,23 +44,95 @@ Set status to failed (something went wrong):
 Post an activity message (visible on dashboard):
   curl -X POST ${activityUrl} -H "Authorization: Bearer ${apiKey}" -H "Content-Type: application/json" -d '{"content":"your message"}'
 
+Upload an attachment (file) to this run:
+  curl -X POST ${uploadUrl} -H "Authorization: Bearer ${apiKey}" -F "file=@/path/to/file.png"
+
+Download an attachment file (use the url shown in the Attachments section):
+  curl -H "Authorization: Bearer ${apiKey}" -o /tmp/file.png "<attachment url>"
+
 Full API spec (docs, databases, etc): ${guideUrl}
 `;
 }
 
+function formatBytes(n) {
+  if (!n || n <= 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * Render a list of attachments (files + embeds) as a markdown-ish block.
+ * Used both standalone (full list at the top of the prompt) and inline
+ * under activity entries the attachment was linked to.
+ */
+function renderAttachmentList(atts, indent = "") {
+  const lines = [];
+  for (const a of atts) {
+    if (a.kind === "file") {
+      const size = formatBytes(a.size_bytes);
+      const meta = [a.mime_type, size].filter(Boolean).join(", ");
+      const who = a.uploaded_by_name ? ` — uploaded by ${a.uploaded_by_name}` : "";
+      lines.push(`${indent}- [file] ${a.filename}${meta ? ` (${meta})` : ""}${who}`);
+      if (a.url) lines.push(`${indent}  ${a.url}`);
+    } else if (a.kind === "embed") {
+      const provider = a.embed_provider || "link";
+      const title = a.title || a.url || "(untitled)";
+      const who = a.uploaded_by_name ? ` — shared by ${a.uploaded_by_name}` : "";
+      lines.push(`${indent}- [${provider}] ${title}${who}`);
+      if (a.url && a.url !== title) lines.push(`${indent}  ${a.url}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function buildPrompt(payload, apiKey, isResume) {
   const apiPrompt = payload.api ? buildApiPrompt(payload.api, apiKey) : "";
+  const allAttachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  // Group attachments by the activity entry they were linked to, so we can
+  // render them inline under the message they arrived with.
+  const attsByActivity = new Map();
+  const orphanAtts = [];
+  for (const a of allAttachments) {
+    if (a.activity_id) {
+      if (!attsByActivity.has(a.activity_id)) attsByActivity.set(a.activity_id, []);
+      attsByActivity.get(a.activity_id).push(a);
+    } else {
+      orphanAtts.push(a);
+    }
+  }
+
+  function renderActivityBlock(entries) {
+    const out = [];
+    for (const a of entries) {
+      if (a.content) out.push(`[${a.author_type}] ${a.content}`);
+      const linked = attsByActivity.get(a.id);
+      if (linked?.length) {
+        out.push(`[${a.author_type}] attached ${linked.length} ${linked.length === 1 ? "attachment" : "attachments"}:`);
+        out.push(renderAttachmentList(linked, "  "));
+      }
+      out.push("");
+    }
+    return out.join("\n").trim();
+  }
 
   if (isResume) {
     const activity = payload.run.activity || [];
     const lastAgentIdx = activity.findLastIndex(a => a.author_type === "agent");
-    const newMessages = lastAgentIdx >= 0 ? activity.slice(lastAgentIdx + 1) : activity;
-    const humanMessages = newMessages
-      .filter(a => a.author_type === "user" || a.author_type === "system")
-      .map(a => `[${a.author_type}] ${a.content}`)
-      .join("\n\n");
+    const newEntries = lastAgentIdx >= 0 ? activity.slice(lastAgentIdx + 1) : activity;
+    const humanEntries = newEntries.filter(a => a.author_type === "user" || a.author_type === "system");
 
-    return `The human has responded to your previous work. Here is their message:\n\n${humanMessages}\n\nContinue working on this task based on their response.\n\n${apiPrompt}`;
+    let resumePrompt = `The human has responded to your previous work. Here is their message:\n\n${renderActivityBlock(humanEntries)}\n\n`;
+
+    // Also list any attachments on the run that aren't tied to a specific
+    // activity entry (shouldn't happen in practice, but keeps the agent from
+    // missing anything).
+    if (orphanAtts.length > 0) {
+      resumePrompt += `## Other Attachments\n\n${renderAttachmentList(orphanAtts)}\n\n`;
+    }
+
+    resumePrompt += `Continue working on this task based on their response. If they attached files or embeds above, fetch them with curl using the API key (see "Download an attachment file" below) before responding.\n\n${apiPrompt}`;
+    return resumePrompt;
   }
 
   let prompt = "";
@@ -92,10 +165,12 @@ function buildPrompt(payload, apiKey, isResume) {
 
   const activity = payload.run.activity || [];
   if (activity.length > 0) {
-    prompt += `## Activity Log\n\n`;
-    for (const a of activity) {
-      prompt += `[${a.author_type}] ${a.content}\n\n`;
-    }
+    prompt += `## Activity Log\n\n${renderActivityBlock(activity)}\n\n`;
+  }
+
+  // Standalone (not linked to any activity entry) — show as a plain list.
+  if (orphanAtts.length > 0) {
+    prompt += `## Attachments\n\nFiles and embeds attached to this run. Fetch files by curl'ing the URL with your Bearer token (see "Download an attachment file" below).\n\n${renderAttachmentList(orphanAtts)}\n\n`;
   }
 
   if (payload.env && Object.keys(payload.env).length > 0) {

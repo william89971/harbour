@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership, AuthContext } from "@/lib/auth";
 import {
   getRunById,
@@ -11,6 +11,7 @@ import {
 } from "@/lib/db/queries";
 import { receiveMultipartUploads, UploadError } from "@/lib/upload";
 import { serializeAttachment } from "@/lib/attachments-serialize";
+import { publicBaseUrl } from "@/lib/request-url";
 
 export const runtime = "nodejs";
 
@@ -18,10 +19,6 @@ function uploaderFromAuth(auth: AuthContext): Uploader {
   return auth.type === "user"
     ? { type: "user", id: auth.userId, name: auth.displayName }
     : { type: "agent", id: auth.agentId, name: auth.agentName };
-}
-
-function baseUrlFrom(req: NextRequest): string {
-  return `${req.nextUrl.protocol}//${req.nextUrl.host}`;
 }
 
 export const GET = withAuth(async (req, auth, { params }) => {
@@ -33,7 +30,7 @@ export const GET = withAuth(async (req, auth, { params }) => {
   if (ownerError) return ownerError;
 
   const rows = listAttachmentsByRun(id);
-  const base = baseUrlFrom(req);
+  const base = publicBaseUrl(req);
   return NextResponse.json(rows.map(r => serializeAttachment(r, base)));
 });
 
@@ -47,7 +44,7 @@ export const POST = withAuth(async (req, auth, { params }) => {
 
   const contentType = req.headers.get("content-type") || "";
   const uploader = uploaderFromAuth(auth);
-  const base = baseUrlFrom(req);
+  const base = publicBaseUrl(req);
 
   // Embed (URL) — JSON body
   if (contentType.toLowerCase().startsWith("application/json")) {

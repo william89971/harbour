@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
 import { getAgentById, touchAgentPolled, getAgentNextRun, peekAgentNext, RunAttachment } from "@/lib/db/queries";
 import { serializeAttachment } from "@/lib/attachments-serialize";
+import { publicBaseUrl } from "@/lib/request-url";
 
 function buildApiSection(req: NextRequest, runId: string) {
-  const base = `${req.nextUrl.protocol}//${req.nextUrl.host}`;
+  const base = publicBaseUrl(req);
   return {
     base_url: base,
     endpoints: {
@@ -49,7 +50,7 @@ export const GET = withAuth(async (req, auth, { params }) => {
     return NextResponse.json(null);
   }
 
-  const base = `${req.nextUrl.protocol}//${req.nextUrl.host}`;
+  const base = publicBaseUrl(req);
   return NextResponse.json({
     ...payload,
     attachments: (payload.attachments as RunAttachment[]).map(a => serializeAttachment(a, base)),
