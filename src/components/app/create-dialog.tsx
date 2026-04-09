@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { SchedulePicker, parseSchedule, serializeSchedule } from "@/components/app/schedule-picker";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
-import { Pin, FileText, KeyRound, Paperclip, Plus, X } from "lucide-react";
+import { Pin, FileText, KeyRound, Loader2, Paperclip, Plus, X } from "lucide-react";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { uploadFileToRun } from "@/lib/upload-client";
 
@@ -156,6 +156,7 @@ export function CreateDialog({
   // Picker dialogs
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [showEnvVarPicker, setShowEnvVarPicker] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   // Run-only fields
   const [whenType, setWhenType] = useState<"now" | "later">("now");
@@ -227,7 +228,8 @@ export function CreateDialog({
 
   async function handleCreateRun(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !agentId) return;
+    if (!name.trim() || !agentId || submitting) return;
+    setSubmitting(true);
 
     const body: Record<string, unknown> = {
       agentId,
@@ -245,7 +247,7 @@ export function CreateDialog({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) { alert("Failed to create run"); return; }
+    if (!res.ok) { alert("Failed to create run"); setSubmitting(false); return; }
 
     const data = await res.json();
 
@@ -276,6 +278,7 @@ export function CreateDialog({
       });
     }
 
+    setSubmitting(false);
     handleClose(false);
     queryClient.invalidateQueries({ queryKey: ["runs"] });
   }
@@ -411,20 +414,11 @@ export function CreateDialog({
                       <Paperclip className="h-3.5 w-3.5" />
                       Attachments
                     </div>
-                    <button type="button" onClick={() => runFileInputRef.current?.click()} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium transition-colors">
+                    <button type="button" onClick={() => { console.log("[attach] Add clicked, ref exists:", !!runFileInputRef.current); runFileInputRef.current?.click(); console.log("[attach] .click() called"); }} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium transition-colors cursor-pointer">
                       <Plus className="h-3 w-3" /> Add
                     </button>
                   </div>
-                  <input
-                    ref={runFileInputRef}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={e => {
-                      if (e.target.files) setStagedFiles(prev => [...prev, ...Array.from(e.target.files!)]);
-                      e.target.value = "";
-                    }}
-                  />
+                  {console.log("[attach] render, stagedFiles.length:", stagedFiles.length)}
                   {stagedFiles.length === 0 ? (
                     <p className="text-xs text-muted-foreground mt-1.5">No files attached.</p>
                   ) : (
@@ -454,8 +448,11 @@ export function CreateDialog({
                 </div>
 
                 <DialogFooter>
-                  <Button type="button" variant="ghost" onClick={() => handleClose(false)}>Cancel</Button>
-                  <Button type="submit">Create Run</Button>
+                  <Button type="button" variant="ghost" onClick={() => handleClose(false)} disabled={submitting}>Cancel</Button>
+                  <Button type="submit" disabled={submitting}>
+                    {submitting && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+                    {submitting && stagedFiles.length > 0 ? "Uploading..." : "Create Run"}
+                  </Button>
                 </DialogFooter>
               </form>
             </TabsContent>
@@ -503,6 +500,28 @@ export function CreateDialog({
           </Tabs>
         </DialogContent>
       </Dialog>
+
+      {/* File input rendered outside the dialog portal for Safari compatibility */}
+      <input
+        ref={runFileInputRef}
+        type="file"
+        multiple
+        style={{ position: "fixed", top: -100, left: -100, opacity: 0 }}
+        onChange={e => {
+          console.log("[attach] onChange fired, files:", e.target.files?.length);
+          const files = e.target.files ? Array.from(e.target.files) : [];
+          console.log("[attach] captured files:", files.map(f => f.name + " (" + f.size + "b)"));
+          if (files.length > 0) {
+            setStagedFiles(prev => {
+              const next = [...prev, ...files];
+              console.log("[attach] setStagedFiles prev:", prev.length, "next:", next.length);
+              return next;
+            });
+          }
+          e.target.value = "";
+          console.log("[attach] input cleared");
+        }}
+      />
 
       {/* Sub-dialogs for picking docs and env vars */}
       <PickerDialog

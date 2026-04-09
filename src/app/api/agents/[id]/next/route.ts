@@ -3,7 +3,7 @@ import { withAuth, requireAgentOwnership } from "@/lib/auth";
 import { getAgentById, touchAgentPolled, getAgentNextRun, peekAgentNext, RunAttachment, getProcessingByAttachment } from "@/lib/db/queries";
 import { serializeAttachment, SerializedAttachment } from "@/lib/attachments-serialize";
 import { publicBaseUrl } from "@/lib/request-url";
-import { isVideoFile, readTranscript, TRANSCRIPT_CAP } from "@/lib/video-processing";
+import { isVideoFile, readTranscript, readStoryboard, TRANSCRIPT_CAP } from "@/lib/video-processing";
 
 function buildApiSection(req: NextRequest, runId: string) {
   const base = publicBaseUrl(req);
@@ -66,9 +66,18 @@ export const GET = withAuth(async (req, auth, { params }) => {
       duration_seconds: proc.duration_seconds,
     };
 
-    if (proc.status === "done" && proc.transcript_path) {
-      processing.transcript = readTranscript(proc.transcript_path, TRANSCRIPT_CAP);
-      processing.transcript_url = `${base}/api/runs/${payload.run.id}/attachments/${att.id}/transcript`;
+    if (proc.status === "done") {
+      // Prefer storyboard (interleaved screenshots + transcript) over plain transcript
+      if (proc.screenshots_dir) {
+        const storyboard = readStoryboard(proc.screenshots_dir, base, TRANSCRIPT_CAP);
+        if (storyboard) {
+          processing.storyboard = storyboard;
+        }
+      }
+      if (proc.transcript_path) {
+        processing.transcript = readTranscript(proc.transcript_path, TRANSCRIPT_CAP);
+        processing.transcript_url = `${base}/api/runs/${payload.run.id}/attachments/${att.id}/transcript`;
+      }
     }
 
     return { ...att, processing };

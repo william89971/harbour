@@ -131,6 +131,15 @@ export async function processVideoAttachment(attachmentId: string, runId: string
       }
     }
 
+    // Generate storyboard (interleaved screenshots + transcript)
+    const segmentsPath = path.join(outDir, "segments.json");
+    // We need a base URL placeholder — the actual URL is resolved at serve time
+    const screenshotsUrlPlaceholder = `{{base}}/api/runs/${runId}/attachments/${attachmentId}/screenshots`;
+    if (screenshotCount > 0) {
+      const storyboard = buildStoryboard(segmentsPath, screenshotCount, interval, screenshotsUrlPlaceholder);
+      fs.writeFileSync(path.join(outDir, "storyboard.txt"), storyboard);
+    }
+
     // Write metadata
     const metadata = {
       duration_seconds: duration,
@@ -186,6 +195,10 @@ async function extractScreenshots(videoPath: string, outDir: string, intervalSec
   return files.length;
 }
 
+// ── Transcript types ────────────────────────────────────────────────
+
+type TranscriptSegment = { start: number; end: number; text: string };
+
 // ── Transcript providers ────────────────────────────────────────────
 
 async function extractTranscript(videoPath: string, outDir: string, provider: string): Promise<string> {
@@ -200,25 +213,29 @@ async function extractTranscript(videoPath: string, outDir: string, provider: st
     audioPath,
   ], { timeout: 300000 });
 
-  let transcript: string;
+  let segments: TranscriptSegment[];
 
   switch (provider) {
     case "whisper":
-      transcript = await transcribeWithWhisper(audioPath, outDir);
+      segments = await transcribeWithWhisper(audioPath, outDir);
       break;
     case "openai":
-      transcript = await transcribeWithOpenAI(audioPath);
+      segments = await transcribeWithOpenAI(audioPath);
       break;
     case "gemini":
-      transcript = await transcribeWithGemini(audioPath);
+      segments = await transcribeWithGemini(audioPath);
       break;
     default:
       throw new Error(`Unknown transcript provider: ${provider}`);
   }
 
-  // Save transcript
+  // Save plain transcript
+  const plainText = segments.map(s => s.text).join(" ");
   const transcriptPath = path.join(outDir, "transcript.txt");
-  fs.writeFileSync(transcriptPath, transcript);
+  fs.writeFileSync(transcriptPath, plainText);
+
+  // Save timestamped segments for storyboard generation
+  fs.writeFileSync(path.join(outDir, "segments.json"), JSON.stringify(segments));
 
   // Clean up audio file
   try { fs.unlinkSync(audioPath); } catch { /* ignore */ }
@@ -226,25 +243,30 @@ async function extractTranscript(videoPath: string, outDir: string, provider: st
   return transcriptPath;
 }
 
-async function transcribeWithWhisper(audioPath: string, outDir: string): Promise<string> {
+async function transcribeWithWhisper(audioPath: string, outDir: string): Promise<TranscriptSegment[]> {
   await execFileAsync("whisper", [
     audioPath,
-    "--output_format", "txt",
+    "--output_format", "json",
     "--output_dir", outDir,
   ], { timeout: 600000 }); // 10 min timeout
 
-  // Whisper outputs <basename>.txt
+  // Whisper outputs <basename>.json
   const basename = path.basename(audioPath, path.extname(audioPath));
-  const outputPath = path.join(outDir, `${basename}.txt`);
-  const text = fs.readFileSync(outputPath, "utf-8").trim();
+  const outputPath = path.join(outDir, `${basename}.json`);
+  const raw = JSON.parse(fs.readFileSync(outputPath, "utf-8"));
 
-  // Clean up whisper's output file (we write our own transcript.txt)
+  // Clean up whisper's output file
   try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
 
-  return text;
+  // Whisper JSON format: { segments: [{ start, end, text, ... }] }
+  return (raw.segments || []).map((s: any) => ({
+    start: s.start,
+    end: s.end,
+    text: (s.text || "").trim(),
+  }));
 }
 
-async function transcribeWithOpenAI(audioPath: string): Promise<string> {
+async function transcribeWithOpenAI(audioPath: string): Promise<TranscriptSegment[]> {
   const apiKey = getVideoTranscriptApiKey("openai");
   if (!apiKey) throw new Error("OpenAI API key not configured");
 
@@ -252,6 +274,7 @@ async function transcribeWithOpenAI(audioPath: string): Promise<string> {
   const formData = new FormData();
   formData.append("model", "whisper-1");
   formData.append("file", new Blob([audioData], { type: "audio/mpeg" }), "audio.mp3");
+  formData.append("response_format", "verbose_json");
 
   const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
@@ -265,10 +288,16 @@ async function transcribeWithOpenAI(audioPath: string): Promise<string> {
   }
 
   const data = await res.json();
-  return data.text;
+
+  // verbose_json format: { segments: [{ start, end, text, ... }] }
+  return (data.segments || []).map((s: any) => ({
+    start: s.start,
+    end: s.end,
+    text: (s.text || "").trim(),
+  }));
 }
 
-async function transcribeWithGemini(audioPath: string): Promise<string> {
+async function transcribeWithGemini(audioPath: string): Promise<TranscriptSegment[]> {
   const apiKey = getVideoTranscriptApiKey("gemini");
   if (!apiKey) throw new Error("Gemini API key not configured");
 
@@ -284,7 +313,7 @@ async function transcribeWithGemini(audioPath: string): Promise<string> {
         contents: [{
           parts: [
             { inline_data: { mime_type: "audio/mpeg", data: base64Audio } },
-            { text: "Transcribe this audio accurately. Return only the transcript text, no timestamps or speaker labels." },
+            { text: `Transcribe this audio with timestamps. Return ONLY a JSON array of segments, no markdown fences or other text. Format: [{"start": 0.0, "end": 2.5, "text": "words spoken"}, ...]` },
           ],
         }],
       }),
@@ -299,7 +328,73 @@ async function transcribeWithGemini(audioPath: string): Promise<string> {
   const data = await res.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error("Gemini returned no transcript text");
-  return text;
+
+  // Gemini may wrap in markdown fences — strip them
+  const cleaned = text.replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "").trim();
+  try {
+    const segments = JSON.parse(cleaned);
+    return segments.map((s: any) => ({
+      start: Number(s.start) || 0,
+      end: Number(s.end) || 0,
+      text: (s.text || "").trim(),
+    }));
+  } catch {
+    // Fallback: treat entire response as a single untimed segment
+    return [{ start: 0, end: 0, text: text.trim() }];
+  }
+}
+
+// ── Storyboard generation ──────────────────────────────────────────
+
+function buildStoryboard(
+  segmentsPath: string,
+  screenshotCount: number,
+  interval: number,
+  screenshotsUrl: string,
+): string {
+  let segments: TranscriptSegment[] = [];
+  try {
+    segments = JSON.parse(fs.readFileSync(segmentsPath, "utf-8"));
+  } catch { /* no segments available */ }
+
+  const lines: string[] = [];
+
+  for (let i = 0; i < screenshotCount; i++) {
+    const windowStart = i * interval;
+    const windowEnd = (i + 1) * interval;
+    const ts = formatDuration(windowStart);
+
+    lines.push(`[Screenshot ${i + 1} — ${ts} — ${screenshotsUrl}/${i}/file]`);
+
+    // Collect transcript segments that overlap this window
+    const windowText = segments
+      .filter(s => s.end > windowStart && s.start < windowEnd)
+      .map(s => s.text)
+      .join(" ")
+      .trim();
+
+    if (windowText) {
+      lines.push(windowText);
+    }
+
+    lines.push(""); // blank line between entries
+  }
+
+  // Any transcript after the last screenshot
+  if (screenshotCount > 0) {
+    const lastWindowEnd = screenshotCount * interval;
+    const trailing = segments
+      .filter(s => s.start >= lastWindowEnd)
+      .map(s => s.text)
+      .join(" ")
+      .trim();
+    if (trailing) {
+      lines.push(trailing);
+      lines.push("");
+    }
+  }
+
+  return lines.join("\n").trim();
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -319,6 +414,26 @@ export function readTranscript(transcriptPath: string, cap?: number): string {
   const text = fs.readFileSync(abs, "utf-8");
   if (cap && text.length > cap) {
     return text.slice(0, cap) + `\n\n[Transcript truncated at ${cap} characters — fetch full transcript via the API]`;
+  }
+  return text;
+}
+
+/**
+ * Read the storyboard file (interleaved screenshots + transcript).
+ * Resolves the {{base}} placeholder with the actual base URL.
+ * Falls back to plain transcript if no storyboard exists.
+ */
+export function readStoryboard(screenshotsDir: string, baseUrl: string, cap?: number): string | null {
+  // storyboard.txt lives one level up from the screenshots dir
+  const parentDir = path.join(uploadsDir(), screenshotsDir, "..");
+  const storyboardPath = path.join(parentDir, "storyboard.txt");
+  if (!fs.existsSync(storyboardPath)) return null;
+
+  let text = fs.readFileSync(storyboardPath, "utf-8");
+  text = text.replace(/\{\{base\}\}/g, baseUrl);
+
+  if (cap && text.length > cap) {
+    return text.slice(0, cap) + `\n\n[Storyboard truncated at ${cap} characters — fetch full version via the API]`;
   }
   return text;
 }

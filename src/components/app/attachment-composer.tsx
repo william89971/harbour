@@ -195,16 +195,6 @@ export const AttachmentComposer = forwardRef<AttachmentComposerHandle, Props>(fu
 
   return (
     <div className={className}>
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        className="hidden"
-        onChange={e => {
-          if (e.target.files) addFiles(e.target.files);
-          e.target.value = "";
-        }}
-      />
 
       {pending.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
@@ -259,14 +249,20 @@ export const AttachmentComposer = forwardRef<AttachmentComposerHandle, Props>(fu
       )}
 
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
-        >
+        <label className="relative inline-flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer">
           <Paperclip className="h-3.5 w-3.5" />
           Attach
-        </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            onChange={e => {
+              if (e.target.files) addFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </label>
         {maxMb && <span>Max {maxMb} MB. Drag files, paste images, or paste Loom/YouTube/Vimeo URLs.</span>}
       </div>
     </div>
