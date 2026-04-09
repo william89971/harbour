@@ -105,10 +105,11 @@ export function initializeSchema(db: Database.Database) {
       id TEXT PRIMARY KEY,
       job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
       agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-      status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skipped')),
+      status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skipped','killed')),
       scheduled_for INTEGER,
       claimed_at INTEGER,
       completed_at INTEGER,
+      kill_requested_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
@@ -344,6 +345,32 @@ export function initializeSchema(db: Database.Database) {
       );
       INSERT INTO runs_new (id, job_id, agent_id, status, claimed_at, completed_at, created_at, updated_at)
         SELECT id, job_id, agent_id, status, claimed_at, completed_at, created_at, updated_at FROM runs;
+      DROP TABLE runs;
+      ALTER TABLE runs_new RENAME TO runs;
+      CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
+      CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+    `);
+  }
+
+  // Migrations: add 'killed' status and kill_requested_at column to runs
+  const runCheck3 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
+  if (runCheck3?.sql && !runCheck3.sql.includes("killed")) {
+    db.exec(`
+      CREATE TABLE runs_new (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skipped','killed')),
+        scheduled_for INTEGER,
+        claimed_at INTEGER,
+        completed_at INTEGER,
+        kill_requested_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      INSERT INTO runs_new (id, job_id, agent_id, status, scheduled_for, claimed_at, completed_at, created_at, updated_at)
+        SELECT id, job_id, agent_id, status, scheduled_for, claimed_at, completed_at, created_at, updated_at FROM runs;
       DROP TABLE runs;
       ALTER TABLE runs_new RENAME TO runs;
       CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);

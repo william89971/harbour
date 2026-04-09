@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
 import { getRunById, updateRunStatus, addRunActivity } from "@/lib/db/queries";
 
-const VALID_STATUSES = ["running", "waiting", "pending", "done", "failed", "skipped"];
+const VALID_STATUSES = ["running", "waiting", "pending", "done", "failed", "skipped", "killed"];
 
 export const PUT = withAuth(async (req, auth, { params }) => {
   const { id } = await params;

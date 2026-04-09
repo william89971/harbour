@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getRunById, addRunOutput, listRunOutput } from "@/lib/db/queries";
+import { getRunById, addRunOutput, listRunOutput, isKillRequested } from "@/lib/db/queries";
 
 export const GET = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
@@ -32,5 +32,8 @@ export const POST = withAuth(async (req, auth, { params }) => {
     tool_name: e.tool_name || null,
   })));
 
-  return NextResponse.json({ ok: true }, { status: 201 });
+  // Piggyback the kill signal onto the runner's frequent output POSTs so the
+  // runner notices a kill request within one flush cycle (~750ms) instead of
+  // waiting for the 10s fallback poll.
+  return NextResponse.json({ ok: true, kill_requested: isKillRequested(id) }, { status: 201 });
 });
