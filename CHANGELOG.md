@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.6.0 — 2026-04-09
+
+### Kill Running Runs
+- Kill button on the run detail page for harbour-agent runs — stops a stuck or misdirected run mid-execution
+- Runner detects kill via piggyback on `POST /output` responses (~750ms) or a 10s fallback poll
+- SIGTERM with 3-second grace period, then SIGKILL if the CLI hasn't exited
+- CLI session is saved on kill — comment on the killed run to resume, and the agent picks back up with full prior context via `--resume`
+- New `killed` status (orange badge) — killed runs can be retried or resumed via comment
+- Kill hidden for external agents (no local runner to signal); follow-up tracked in #14
+- New endpoint: `POST /api/runs/:id/kill`, `GET /api/runs/:id/kill`
+
 ## v1.5.0 — 2026-04-08
 
 ### Run Attachments
