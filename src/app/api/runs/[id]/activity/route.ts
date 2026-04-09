@@ -43,8 +43,10 @@ export const POST = withAuth(async (req, auth, { params }) => {
     linkAttachmentsToActivity(attachmentIds, entry.id, id);
   }
 
-  // When a user responds, move to pending (ready for agent pickup)
-  if (authorType === "user" && ["waiting", "done", "failed"].includes(run.status)) {
+  // When a user responds, move to pending (ready for agent pickup).
+  // 'killed' runs can also be resumed via a comment — the runner saved the
+  // session before exiting, so the agent picks back up where it left off.
+  if (authorType === "user" && ["waiting", "done", "failed", "killed"].includes(run.status)) {
     updateRunStatus(id, "pending");
     addRunActivity(id, "system", null, "System", "Status changed to **pending**");
   }

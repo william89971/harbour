@@ -11,7 +11,7 @@ import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
-import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw } from "lucide-react";
+import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { StatusBadge } from "@/components/app/run-status";
 import { AttachmentComposer, type AttachmentComposerHandle } from "@/components/app/attachment-composer";
@@ -29,6 +29,7 @@ type Run = {
   id: string; job_id: string; agent_id: string; status: string;
   job_name: string; agent_name: string; agent_type: string; one_off: number;
   created_at: number; updated_at: number; completed_at: number | null;
+  kill_requested_at: number | null;
   activity: Activity[];
   attachments: SerializedAttachment[];
 };
@@ -211,6 +212,7 @@ export default function RunDetailPage() {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [killing, setKilling] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [stagedIds, setStagedIds] = useState<string[]>([]);
   const composerRef = useRef<AttachmentComposerHandle>(null);
@@ -225,6 +227,12 @@ export default function RunDetailPage() {
     },
     refetchInterval: 5000,
   });
+
+  // Clear local killing state once the runner finalizes and the run is no
+  // longer 'running' — keeps the button honest across refreshes.
+  useEffect(() => {
+    if (run && run.status !== "running") setKilling(false);
+  }, [run?.status]);
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
@@ -280,8 +288,28 @@ export default function RunDetailPage() {
     setRetrying(false);
   }
 
+  async function handleKill() {
+    if (!confirm("Kill this run? The CLI session will be saved so you can resume it with a comment.")) return;
+    setKilling(true);
+    const res = await fetch(`/api/runs/${id}/kill`, { method: "POST" });
+    if (res.ok) {
+      queryClient.invalidateQueries({ queryKey: ["runs", id] });
+    } else {
+      const body = await res.json().catch(() => ({ error: "Failed to kill run" }));
+      alert(body.error || "Failed to kill run");
+      setKilling(false);
+    }
+    // Leave `killing=true` while run.kill_requested_at is set — clears when
+    // the runner finalizes and status flips to 'killed'.
+  }
+
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
   if (!run) return <div className="text-sm text-muted-foreground py-12 text-center">Run not found.</div>;
+
+  // Kill button should only be clickable once per run — derive the visible
+  // "killing" state from the server flag so it survives page refreshes too.
+  const killInFlight = killing || !!run.kill_requested_at;
+  const canKill = run.status === "running" && run.agent_type === "harbour";
 
   return (
     <div className="space-y-6">
@@ -293,7 +321,19 @@ export default function RunDetailPage() {
           <StatusBadge status={run.status} />
         </div>
         <div className="flex items-center gap-2">
-          {(run.status === "failed" || run.status === "skipped") && (
+          {canKill && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleKill}
+              disabled={killInFlight}
+              className="text-orange-600 dark:text-orange-400 hover:text-orange-700"
+            >
+              <Ban className="h-3.5 w-3.5 mr-1.5" />
+              {killInFlight ? "Killing..." : "Kill"}
+            </Button>
+          )}
+          {(run.status === "failed" || run.status === "skipped" || run.status === "killed") && (
             <Button variant="outline" size="sm" onClick={handleRetry} disabled={retrying}>
               <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> {retrying ? "Retrying..." : "Retry"}
             </Button>

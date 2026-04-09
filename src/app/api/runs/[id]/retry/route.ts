@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withUserAuth } from "@/lib/auth";
 import { getRunById, updateRunStatus, addRunActivity } from "@/lib/db/queries";
 
-const RETRYABLE = ["failed", "skipped"];
+const RETRYABLE = ["failed", "skipped", "killed"];
 
 export const POST = withUserAuth(async (req, auth, { params }) => {
   const { id } = await params;

@@ -1,5 +1,5 @@
 import {
-  AlertCircle, CheckCircle2, XCircle, Clock, SkipForward, Hourglass, CalendarClock,
+  AlertCircle, CheckCircle2, XCircle, Clock, SkipForward, Hourglass, CalendarClock, Ban,
 } from "lucide-react";
 
 const statusIcons: Record<string, { icon: typeof Clock; color: string; bg: string }> = {
@@ -10,6 +10,7 @@ const statusIcons: Record<string, { icon: typeof Clock; color: string; bg: strin
   failed:    { icon: XCircle,       color: "text-red-500",           bg: "bg-red-500/10" },
   running:   { icon: Clock,         color: "text-blue-500",          bg: "bg-blue-500/10" },
   skipped:   { icon: SkipForward,   color: "text-muted-foreground",  bg: "bg-muted" },
+  killed:    { icon: Ban,           color: "text-orange-500",        bg: "bg-orange-500/10" },
 };
 
 /** Boxed status icon (8x8 rounded-lg) used in list views */
@@ -40,6 +41,7 @@ export function StatusBadge({ status }: { status: string }) {
     done:      "bg-green-500/10 text-green-600 dark:text-green-400",
     failed:    "bg-red-500/10 text-red-600 dark:text-red-400",
     skipped:   "bg-muted text-muted-foreground",
+    killed:    "bg-orange-500/10 text-orange-600 dark:text-orange-400",
   };
   return <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${colors[status] || ""}`}>{status}</span>;
 }
