@@ -19,6 +19,11 @@ async function apiCall(url, apiKey, method = "GET", body = null) {
   return res.json();
 }
 
+// Fallback poll interval for kill requests when the CLI is silent.
+// The piggyback path (POST /output response) handles the common case within
+// ~750ms; this catches long silent stretches.
+const KILL_POLL_INTERVAL_MS = 10_000;
+
 function buildApiPrompt(api, apiKey) {
   const runStatusUrl = api.endpoints.update_status.replace("PUT ", "");
   const activityUrl = api.endpoints.post_activity.replace("POST ", "");
@@ -293,16 +298,43 @@ async function runSingleAgent(runner) {
   let flushTimer = null;
   const FLUSH_INTERVAL = 750; // ms
 
+  // Kill plumbing: the Next.js server sets runs.kill_requested_at when the
+  // user clicks Kill in the dashboard. We learn about it two ways:
+  //   1. Piggyback — POST /output returns { kill_requested: true } (hot path,
+  //      latency ≤ 750ms while the CLI is streaming)
+  //   2. Fallback — GET /runs/:id/kill on a 10s interval (catches silent CLIs)
+  // Either path fires the AbortController, which triggers the SIGTERM+grace+
+  // SIGKILL sequence inside runCliTool.
+  const killController = new AbortController();
+  let killed = false;
+  function triggerKill(reason) {
+    if (killed) return;
+    killed = true;
+    console.log(`  [${agentName}] Kill requested (${reason}) — stopping run ${runId}`);
+    killController.abort();
+  }
+
   async function flushEvents() {
     if (eventBatch.length === 0) return;
     const batch = eventBatch;
     eventBatch = [];
     try {
-      await apiCall(`${url}/api/runs/${runId}/output`, apiKey, "POST", batch);
+      const res = await apiCall(`${url}/api/runs/${runId}/output`, apiKey, "POST", batch);
+      if (res?.kill_requested) triggerKill("piggyback");
     } catch (err) {
       console.error(`  [${agentName}] Failed to stream output: ${err.message}`);
     }
   }
+
+  // Fallback kill poll — catches the case where the CLI goes silent for a
+  // long thinking stretch and we have nothing to piggyback on.
+  const killPollTimer = setInterval(async () => {
+    if (killed) return;
+    try {
+      const res = await apiCall(`${url}/api/runs/${runId}/kill`, apiKey);
+      if (res?.kill_requested) triggerKill("poll");
+    } catch { /* best effort — server may be restarting */ }
+  }, KILL_POLL_INTERVAL_MS);
 
   function queueEvent(evt) {
     eventBatch.push(evt);
@@ -337,8 +369,13 @@ async function runSingleAgent(runner) {
   const timeoutMs = timeoutMinutes * 60 * 1000;
   let result;
   try {
-    result = await runCliTool(cmd.binary, cmd.args, cmd.cwd, { timeoutMs, onLine });
+    result = await runCliTool(cmd.binary, cmd.args, cmd.cwd, {
+      timeoutMs,
+      onLine,
+      signal: killController.signal,
+    });
   } catch (err) {
+    clearInterval(killPollTimer);
     console.error(`  [${agentName}] CLI execution failed: ${err.message}`);
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
@@ -349,12 +386,65 @@ async function runSingleAgent(runner) {
     return;
   }
 
+  clearInterval(killPollTimer);
+
   // Flush any remaining buffered events
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
   await flushEvents();
+
+  // Handle user-initiated kill: save session, post activity, set status=killed,
+  // and bail before the normal "did agent set final status?" failsafe below
+  // (which would otherwise overwrite killed → failed).
+  if (killed) {
+    // Race: agent may have finished naturally in the tiny window between
+    // kill request and SIGTERM landing. If the server already has a terminal
+    // status, respect it — the kill was moot.
+    let statusAtKill = "running";
+    try {
+      const run = await apiCall(`${url}/api/runs/${runId}`, apiKey);
+      statusAtKill = run.status;
+    } catch { /* best effort */ }
+
+    if (["done", "waiting", "skipped", "failed"].includes(statusAtKill)) {
+      console.log(`  [${agentName}] Kill landed too late — run already ${statusAtKill}; respecting existing status`);
+      // Save session for waiting (normal behavior), clean up otherwise.
+      if (statusAtKill === "waiting") {
+        const parsedLate = provider.parseResult(result.stdout, sessionId);
+        const lateSessionId = parsedLate.sessionId || sessionId;
+        if (lateSessionId) {
+          sessions[runId] = { sessionId: lateSessionId, cli };
+          saveSessions(sessions);
+        }
+      } else {
+        delete sessions[runId];
+        saveSessions(sessions);
+      }
+      return;
+    } else {
+      const parsedOnKill = provider.parseResult(result.stdout, sessionId);
+      const killSessionId = parsedOnKill.sessionId || sessionId;
+      if (killSessionId) {
+        sessions[runId] = { sessionId: killSessionId, cli };
+        saveSessions(sessions);
+        console.log(`  [${agentName}] Session saved for resume: ${killSessionId}`);
+      } else {
+        console.warn(`  [${agentName}] No session ID captured before kill — resume will start fresh`);
+      }
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
+          content: "Run killed by user. Comment on this run to resume — the CLI session was saved and the agent will pick back up with full context.",
+        });
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
+      } catch (err) {
+        console.error(`  [${agentName}] Failed to finalize kill: ${err.message}`);
+      }
+      console.log(`  [${agentName}] Run ${runId} killed.`);
+      return;
+    }
+  }
 
   // Parse final result for activity summary
   const parsed = provider.parseResult(result.stdout, sessionId);

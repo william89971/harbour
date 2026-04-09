@@ -337,9 +337,13 @@ export function ensureWorkingDir(agentName) {
 
 /**
  * Run a CLI tool, streaming JSONL output line-by-line to onLine callback.
- * Returns { code, stdout, stderr } when the process exits.
+ * Returns { code, stdout, stderr, aborted } when the process exits.
+ *
+ * Pass `signal` (an AbortSignal) to request a graceful kill: SIGTERM is sent
+ * immediately, followed by SIGKILL after `killGraceMs` (default 3s) if the
+ * process hasn't exited.
  */
-export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, onLine } = {}) {
+export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, killGraceMs = 3000, onLine, signal } = {}) {
   return new Promise((resolve, reject) => {
     // Build clean environment: strip Claude Code nesting guards
     const env = { ...process.env };
@@ -362,6 +366,8 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
     let stderr = "";
     let lineBuffer = "";
     let gotOutput = false;
+    let aborted = false;
+    let killFollowupTimer = null;
 
     // Kill the process if no stdout arrives within the startup window.
     // Catches auth prompts, interactive login hangs, etc.
@@ -372,6 +378,20 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
         setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 2000);
       }
     }, startupTimeoutMs);
+
+    // Abort handler: SIGTERM → killGraceMs grace → SIGKILL
+    function handleAbort() {
+      if (aborted) return;
+      aborted = true;
+      try { child.kill("SIGTERM"); } catch {}
+      killFollowupTimer = setTimeout(() => {
+        try { child.kill("SIGKILL"); } catch {}
+      }, killGraceMs);
+    }
+    if (signal) {
+      if (signal.aborted) handleAbort();
+      else signal.addEventListener("abort", handleAbort, { once: true });
+    }
 
     child.stdout.on("data", (data) => {
       if (!gotOutput) {
@@ -395,14 +415,21 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
 
     child.stderr.on("data", (data) => { stderr += data.toString(); });
 
-    child.on("error", (err) => { clearTimeout(startupTimer); reject(err); });
+    child.on("error", (err) => {
+      clearTimeout(startupTimer);
+      if (killFollowupTimer) clearTimeout(killFollowupTimer);
+      if (signal) signal.removeEventListener("abort", handleAbort);
+      reject(err);
+    });
     child.on("close", (code) => {
       clearTimeout(startupTimer);
+      if (killFollowupTimer) clearTimeout(killFollowupTimer);
+      if (signal) signal.removeEventListener("abort", handleAbort);
       // Flush remaining buffer
       if (onLine && lineBuffer.trim()) {
         onLine(lineBuffer.trim());
       }
-      resolve({ code, stdout, stderr });
+      resolve({ code, stdout, stderr, aborted });
     });
   });
 }

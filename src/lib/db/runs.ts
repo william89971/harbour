@@ -35,12 +35,18 @@ export function getRunWithActivity(id: string) {
 
 export function updateRunStatus(id: string, status: string) {
   const db = getDb();
-  const completedAt = (status === "done" || status === "failed" || status === "skipped")
+  const completedAt = (status === "done" || status === "failed" || status === "skipped" || status === "killed")
     ? ", completed_at = unixepoch()"
     : ", completed_at = NULL";
-  db.prepare(`UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt} WHERE id = ?`).run(status, id);
+  // When a run transitions out of 'running' (to any status), clear any pending
+  // kill request so it can't linger and affect a subsequent run that somehow
+  // reuses the id.
+  const clearKill = status !== "running" ? ", kill_requested_at = NULL" : "";
+  db.prepare(`UPDATE runs SET status = ?, updated_at = unixepoch()${completedAt}${clearKill} WHERE id = ?`).run(status, id);
 
-  // Advance the job's next_run_at when a run completes
+  // Advance the job's next_run_at when a run completes.
+  // 'killed' is terminal for this run but does NOT advance the job's schedule —
+  // the user stopped it intentionally and may resume it via a comment.
   if (status === "done" || status === "failed" || status === "skipped") {
     const run = getRunById(id);
     if (run?.job_id) {
@@ -55,6 +61,27 @@ export function updateRunStatus(id: string, status: string) {
   }
 
   return getRunById(id);
+}
+
+/**
+ * Mark a run for kill. The runner picks this up on its next kill-check and
+ * SIGTERMs the CLI child. Returns true if the kill was recorded, false if the
+ * run isn't in a killable state (not running, already killed, etc).
+ */
+export function requestKillRun(id: string): boolean {
+  const db = getDb();
+  const run = getRunById(id);
+  if (!run) return false;
+  if (run.status !== "running") return false;
+  if (run.kill_requested_at) return true; // already requested — idempotent
+  db.prepare(`UPDATE runs SET kill_requested_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(id);
+  return true;
+}
+
+export function isKillRequested(id: string): boolean {
+  const db = getDb();
+  const row = db.prepare(`SELECT kill_requested_at FROM runs WHERE id = ?`).get(id) as any;
+  return !!row?.kill_requested_at;
 }
 
 export function listRunsByJob(jobId: string, limit = 50) {

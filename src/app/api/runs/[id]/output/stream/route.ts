@@ -38,7 +38,7 @@ export const GET = withAuth(async (req, auth, { params }) => {
 
           // Check if run is finished
           const currentRun = getRunById(id);
-          if (currentRun && (currentRun.status === "done" || currentRun.status === "failed" || currentRun.status === "skipped")) {
+          if (currentRun && (currentRun.status === "done" || currentRun.status === "failed" || currentRun.status === "skipped" || currentRun.status === "killed")) {
             // Send any final events, then close
             send("status", { status: currentRun.status });
             send("done", {});
