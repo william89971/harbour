@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -10,8 +10,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { SchedulePicker, parseSchedule, serializeSchedule } from "@/components/app/schedule-picker";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
-import { Pin, FileText, KeyRound, Plus, X } from "lucide-react";
+import { Pin, FileText, KeyRound, Paperclip, Plus, X } from "lucide-react";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
+import { uploadFileToRun } from "@/lib/upload-client";
 
 type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null };
 type Doc = { id: string; title: string; pinned: number };
@@ -81,6 +82,7 @@ function SelectedItems({
   onAdd,
   icon: Icon,
   label,
+  emptyText = "None selected. Pinned items auto-included.",
   nameClass,
 }: {
   items: { id: string; name: string; pinned: number }[];
@@ -89,24 +91,28 @@ function SelectedItems({
   onAdd: () => void;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
+  emptyText?: string;
   nameClass?: string;
 }) {
   const selected = items.filter(i => selectedIds.includes(i.id));
 
   return (
-    <div className="space-y-2">
+    <div className="rounded-lg border bg-muted/40 px-3 py-2.5">
       <div className="flex items-center justify-between">
-        <Label>{label}</Label>
-        <button type="button" onClick={onAdd} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+        <div className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+          <Icon className="h-3.5 w-3.5" />
+          {label}
+        </div>
+        <button type="button" onClick={onAdd} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium transition-colors">
           <Plus className="h-3 w-3" /> Add
         </button>
       </div>
       {selected.length === 0 ? (
-        <p className="text-xs text-muted-foreground">None selected. Pinned items will still be included automatically.</p>
+        <p className="text-xs text-muted-foreground mt-1.5">{emptyText}</p>
       ) : (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5 mt-2">
           {selected.map(item => (
-            <span key={item.id} className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs font-medium">
+            <span key={item.id} className="inline-flex items-center gap-1 rounded-md bg-background border px-2 py-1 text-xs font-medium">
               <Icon className="h-3 w-3 text-muted-foreground" />
               <span className={nameClass}>{item.name}</span>
               <button type="button" onClick={() => onRemove(item.id)} className="text-muted-foreground hover:text-foreground transition-colors ml-0.5">
@@ -154,6 +160,8 @@ export function CreateDialog({
   // Run-only fields
   const [whenType, setWhenType] = useState<"now" | "later">("now");
   const [scheduledTime, setScheduledTime] = useState("");
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const runFileInputRef = useRef<HTMLInputElement>(null);
 
   // Job-only fields
   const [description, setDescription] = useState("");
@@ -201,6 +209,7 @@ export function CreateDialog({
     setSelectedEnvVarIds([]);
     setWhenType("now");
     setScheduledTime("");
+    setStagedFiles([]);
     setDescription("");
     setSchedule(parseSchedule(null));
     setCheckCommand("");
@@ -238,16 +247,33 @@ export function CreateDialog({
     });
     if (!res.ok) { alert("Failed to create run"); return; }
 
-    // Auto-link the backing job to the active project
-    if (activeProjectId) {
-      const data = await res.json();
-      if (data.jobId) {
-        await fetch(`/api/projects/${activeProjectId}`, {
-          method: "PATCH",
+    const data = await res.json();
+
+    // Upload staged files and link to an activity entry
+    if (stagedFiles.length > 0) {
+      const attachmentIds: string[] = [];
+      for (const file of stagedFiles) {
+        try {
+          const att = await uploadFileToRun(data.runId, file).promise;
+          attachmentIds.push(att.id);
+        } catch { /* skip failed uploads */ }
+      }
+      if (attachmentIds.length > 0) {
+        await fetch(`/api/runs/${data.runId}/activity`, {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "link", type: "job", targetId: data.jobId }),
+          body: JSON.stringify({ content: "", attachment_ids: attachmentIds }),
         });
       }
+    }
+
+    // Auto-link the backing job to the active project
+    if (activeProjectId && data.jobId) {
+      await fetch(`/api/projects/${activeProjectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "link", type: "job", targetId: data.jobId }),
+      });
     }
 
     handleClose(false);
@@ -378,6 +404,43 @@ export function CreateDialog({
 
                 {modelThinkingFields}
                 {docsEnvVarsFields}
+
+                <div className="rounded-lg border bg-muted/40 px-3 py-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                      <Paperclip className="h-3.5 w-3.5" />
+                      Attachments
+                    </div>
+                    <button type="button" onClick={() => runFileInputRef.current?.click()} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium transition-colors">
+                      <Plus className="h-3 w-3" /> Add
+                    </button>
+                  </div>
+                  <input
+                    ref={runFileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={e => {
+                      if (e.target.files) setStagedFiles(prev => [...prev, ...Array.from(e.target.files!)]);
+                      e.target.value = "";
+                    }}
+                  />
+                  {stagedFiles.length === 0 ? (
+                    <p className="text-xs text-muted-foreground mt-1.5">No files attached.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {stagedFiles.map((file, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 rounded-md bg-background border px-2 py-1 text-xs font-medium">
+                          <Paperclip className="h-3 w-3 text-muted-foreground" />
+                          <span className="truncate max-w-[150px]">{file.name}</span>
+                          <button type="button" onClick={() => setStagedFiles(prev => prev.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-foreground transition-colors ml-0.5">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 <div className="space-y-2">
                   <Label>When</Label>

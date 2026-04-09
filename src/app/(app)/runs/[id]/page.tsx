@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -376,9 +376,7 @@ export default function RunDetailPage() {
   const [retrying, setRetrying] = useState(false);
   const [killing, setKilling] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [stagedIds, setStagedIds] = useState<string[]>([]);
   const composerRef = useRef<AttachmentComposerHandle>(null);
-  const onStagedIdsChange = useCallback((ids: string[]) => setStagedIds(ids), []);
 
   const { data: run = null, isLoading: loading } = useQuery<Run | null>({
     queryKey: ["runs", id],
@@ -527,7 +525,7 @@ export default function RunDetailPage() {
       <div className="space-y-1">
         <SectionHeader>Activity</SectionHeader>
         <div className="space-y-3">
-          {run.activity.length === 0 && (run.attachments?.length ?? 0) === 0 ? (
+          {run.activity.length === 0 ? (
             <EmptyState>No activity yet.</EmptyState>
           ) : (
             run.activity.map(entry => {
@@ -561,23 +559,6 @@ export default function RunDetailPage() {
             })
           )}
         </div>
-        {/* Standalone attachments not tied to any activity entry.
-            Filter out IDs still staged in the composer so they don't flicker
-            here while waiting to be attached to a comment. */}
-        {(() => {
-          const stagedSet = new Set(stagedIds);
-          const orphans = (run.attachments ?? []).filter(a => !a.activity_id && !stagedSet.has(a.id));
-          if (orphans.length === 0) return null;
-          return (
-            <div className="pt-3">
-              <SectionHeader>Attachments</SectionHeader>
-              <AttachmentList items={orphans} />
-              {orphans.filter(a => isVideoAttachment(a)).map(a => (
-                <VideoProcessingInfo key={`proc-${a.id}`} runId={id} attachment={a} />
-              ))}
-            </div>
-          );
-        })()}
       </div>
 
       {/* Reply Form (waiting, pending, done, failed — but not running) */}
@@ -608,7 +589,7 @@ export default function RunDetailPage() {
               }
             }}
           />
-          <AttachmentComposer ref={composerRef} runId={id} onStagedIdsChange={onStagedIdsChange} />
+          <AttachmentComposer ref={composerRef} runId={id} />
           <div className="flex justify-end">
             <Button type="submit" size="sm" disabled={sending}>
               <Send className="h-3.5 w-3.5 mr-1.5" /> Send
