@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getAgentById, touchAgentPolled, getAgentNextRun, peekAgentNext, RunAttachment } from "@/lib/db/queries";
-import { serializeAttachment } from "@/lib/attachments-serialize";
+import { getAgentById, touchAgentPolled, getAgentNextRun, peekAgentNext, RunAttachment, getProcessingByAttachment } from "@/lib/db/queries";
+import { serializeAttachment, SerializedAttachment } from "@/lib/attachments-serialize";
 import { publicBaseUrl } from "@/lib/request-url";
+import { isVideoFile, readTranscript, TRANSCRIPT_CAP } from "@/lib/video-processing";
 
 function buildApiSection(req: NextRequest, runId: string) {
   const base = publicBaseUrl(req);
@@ -51,9 +52,31 @@ export const GET = withAuth(async (req, auth, { params }) => {
   }
 
   const base = publicBaseUrl(req);
+  const serialized = (payload.attachments as RunAttachment[]).map(a => serializeAttachment(a, base));
+
+  const enriched = serialized.map((att: SerializedAttachment) => {
+    if (!isVideoFile(att.mime_type, att.filename)) return att;
+    const proc = getProcessingByAttachment(att.id);
+    if (!proc) return att;
+
+    const processing: Record<string, unknown> = {
+      status: proc.status,
+      screenshot_count: proc.screenshot_count,
+      screenshots_url: `${base}/api/runs/${payload.run.id}/attachments/${att.id}/screenshots`,
+      duration_seconds: proc.duration_seconds,
+    };
+
+    if (proc.status === "done" && proc.transcript_path) {
+      processing.transcript = readTranscript(proc.transcript_path, TRANSCRIPT_CAP);
+      processing.transcript_url = `${base}/api/runs/${payload.run.id}/attachments/${att.id}/transcript`;
+    }
+
+    return { ...att, processing };
+  });
+
   return NextResponse.json({
     ...payload,
-    attachments: (payload.attachments as RunAttachment[]).map(a => serializeAttachment(a, base)),
+    attachments: enriched,
     api: buildApiSection(req, payload.run.id),
   });
 });

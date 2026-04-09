@@ -12,6 +12,8 @@ import {
 import { receiveMultipartUploads, UploadError } from "@/lib/upload";
 import { serializeAttachment } from "@/lib/attachments-serialize";
 import { publicBaseUrl } from "@/lib/request-url";
+import { isVideoAutoProcessEnabled } from "@/lib/db/settings";
+import { isVideoFile, processVideoAttachment } from "@/lib/video-processing";
 
 export const runtime = "nodejs";
 
@@ -69,6 +71,15 @@ export const POST = withAuth(async (req, auth, { params }) => {
       sizeBytes: f.sizeBytes,
       uploader,
     }));
+
+    if (isVideoAutoProcessEnabled()) {
+      for (const att of created) {
+        if (isVideoFile(att.mime_type, att.filename)) {
+          processVideoAttachment(att.id, id);
+        }
+      }
+    }
+
     return NextResponse.json(created.map(r => serializeAttachment(r, base)), { status: 201 });
   } catch (err) {
     if (err instanceof UploadError) {

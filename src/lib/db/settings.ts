@@ -33,3 +33,40 @@ export function getRecentRunsLimit(): number {
   const n = val ? parseInt(val, 10) : NaN;
   return Number.isFinite(n) && n > 0 ? n : 10;
 }
+
+// Video processing settings
+
+export function isVideoAutoProcessEnabled(): boolean {
+  return getSetting("video_auto_process") === "true";
+}
+
+export function getVideoScreenshotInterval(): number {
+  const val = getSetting("video_screenshot_interval");
+  const n = val ? parseInt(val, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 5;
+}
+
+export type TranscriptProvider = "off" | "whisper" | "openai" | "gemini";
+
+export function getVideoTranscriptProvider(): TranscriptProvider {
+  const val = getSetting("video_transcript_provider");
+  if (val === "whisper" || val === "openai" || val === "gemini") return val;
+  return "off";
+}
+
+export function getVideoTranscriptApiKey(provider: "openai" | "gemini"): string | null {
+  const key = provider === "openai" ? "video_openai_api_key" : "video_gemini_api_key";
+  return getSetting(key);
+}
+
+/** Settings keys that contain sensitive values and should be masked in API responses */
+const SENSITIVE_SETTINGS = new Set(["video_openai_api_key", "video_gemini_api_key"]);
+
+export function isSensitiveSetting(key: string): boolean {
+  return SENSITIVE_SETTINGS.has(key);
+}
+
+export function maskSettingValue(value: string): string {
+  if (value.length <= 8) return "••••••••";
+  return "••••••••" + value.slice(-4);
+}

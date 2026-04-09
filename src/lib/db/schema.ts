@@ -271,7 +271,26 @@ export function initializeSchema(db: Database.Database) {
       PRIMARY KEY (project_id, database_id)
     );
 
+    -- Video processing: tracks processing state for uploaded video attachments
+    CREATE TABLE IF NOT EXISTS attachment_processing (
+      id TEXT PRIMARY KEY,
+      attachment_id TEXT NOT NULL UNIQUE REFERENCES run_attachments(id) ON DELETE CASCADE,
+      run_id TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('queued','processing','done','failed')),
+      transcript_path TEXT,
+      screenshots_dir TEXT,
+      screenshot_count INTEGER NOT NULL DEFAULT 0,
+      screenshot_interval INTEGER,
+      duration_seconds REAL,
+      error TEXT,
+      started_at INTEGER,
+      completed_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- Indexes
+    CREATE INDEX IF NOT EXISTS idx_attachment_processing_attachment ON attachment_processing(attachment_id);
+    CREATE INDEX IF NOT EXISTS idx_attachment_processing_run ON attachment_processing(run_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
     CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);

@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth, withUserAuth } from "@/lib/auth";
-import { getAllSettings, setSetting } from "@/lib/db/queries";
+import { getAllSettings, setSetting, isSensitiveSetting, maskSettingValue } from "@/lib/db/queries";
 
 export const GET = withAuth(async () => {
-  return NextResponse.json(getAllSettings());
+  const settings = getAllSettings();
+  for (const key of Object.keys(settings)) {
+    if (isSensitiveSetting(key)) {
+      settings[key] = maskSettingValue(settings[key]);
+    }
+  }
+  return NextResponse.json(settings);
 });
 
 export const PUT = withUserAuth(async (req) => {
@@ -14,5 +20,11 @@ export const PUT = withUserAuth(async (req) => {
     }
   }
 
-  return NextResponse.json(getAllSettings());
+  const settings = getAllSettings();
+  for (const key of Object.keys(settings)) {
+    if (isSensitiveSetting(key)) {
+      settings[key] = maskSettingValue(settings[key]);
+    }
+  }
+  return NextResponse.json(settings);
 });
