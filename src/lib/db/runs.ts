@@ -2,7 +2,7 @@ import { getDb } from "./schema";
 import { v4 as uuid } from "uuid";
 import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
-import { listAttachmentsByRun } from "./attachments";
+import { listAttachmentsByRun, deleteRunAttachmentsDir } from "./attachments";
 
 export function createRun(jobId: string, agentId: string) {
   const db = getDb();
@@ -82,6 +82,12 @@ export function isKillRequested(id: string): boolean {
   const db = getDb();
   const row = db.prepare(`SELECT kill_requested_at FROM runs WHERE id = ?`).get(id) as any;
   return !!row?.kill_requested_at;
+}
+
+export function deleteRun(id: string) {
+  const db = getDb();
+  db.prepare(`DELETE FROM runs WHERE id = ?`).run(id);
+  deleteRunAttachmentsDir(id);
 }
 
 export function listRunsByJob(jobId: string, limit = 50) {

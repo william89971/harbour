@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -11,7 +11,8 @@ import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
-import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film, Loader2, ChevronDown, ChevronRight, FileText, Image } from "lucide-react";
+import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film, Loader2, ChevronDown, ChevronRight, FileText, Image, Trash2, MoreVertical } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { timeAgo } from "@/lib/time";
 import { StatusBadge } from "@/components/app/run-status";
 import { AttachmentComposer, type AttachmentComposerHandle } from "@/components/app/attachment-composer";
@@ -368,8 +369,11 @@ function VideoProcessingInfo({ runId, attachment }: { runId: string; attachment:
   );
 }
 
+const MANAGEABLE_STATUSES = ["waiting", "done", "failed", "skipped", "killed"];
+
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
@@ -463,6 +467,21 @@ export default function RunDetailPage() {
     // the runner finalizes and status flips to 'killed'.
   }
 
+  async function handleChangeStatus(newStatus: string) {
+    const res = await fetch(`/api/runs/${id}/status`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    if (res.ok) queryClient.invalidateQueries({ queryKey: ["runs", id] });
+  }
+
+  async function handleDelete() {
+    if (!confirm("Delete this run? This cannot be undone.")) return;
+    const res = await fetch(`/api/runs/${id}`, { method: "DELETE" });
+    if (res.ok) router.push("/");
+  }
+
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
   if (!run) return <div className="text-sm text-muted-foreground py-12 text-center">Run not found.</div>;
 
@@ -502,6 +521,25 @@ export default function RunDetailPage() {
             <Link href={`/jobs/${run.job_id}`}>
               <Button variant="outline" size="sm">View Job</Button>
             </Link>
+          )}
+          {MANAGEABLE_STATUSES.includes(run.status) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex items-center justify-center rounded-md border border-input bg-background px-2.5 py-1.5 text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors">
+                <MoreVertical className="h-3.5 w-3.5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {MANAGEABLE_STATUSES.filter(s => s !== run.status).map(s => (
+                  <DropdownMenuItem key={s} onClick={() => handleChangeStatus(s)}>
+                    Mark as {s}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleDelete} className="text-red-600 dark:text-red-400">
+                  <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                  Delete run
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </div>

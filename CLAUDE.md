@@ -57,7 +57,8 @@ npm run lint                    # ESLint (pre-existing `any` warnings are expect
 npm run test                    # Vitest unit tests
 npm run build                   # Next.js production build
 
-# 3. Rebuild and restart production
+# 3. Rebuild and restart production (REQUIRED after every change — the
+#    running server won't pick up a new build until restarted)
 kill $(lsof -ti :3000)          # stop current production server
 npm run build                   # rebuild
 npm start -- -p 3000 &          # restart in background
