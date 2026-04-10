@@ -2,36 +2,79 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
-import { Activity, Bot, Plus } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Activity, Bot, Plus, Zap, Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
 import { CreateDialog } from "@/components/app/create-dialog";
+import { TriggerDialog } from "@/components/app/trigger-dialog";
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
 import { useProjectFilter } from "@/lib/hooks/use-project-filter";
 
 type Run = {
-  id: string; status: string; job_name: string; agent_name: string;
-  created_at: number; updated_at: number; completed_at: number | null;
+  id: string; status: string; job_id: string; job_name: string; job_active: number;
+  agent_name: string; created_at: number; updated_at: number; completed_at: number | null;
 };
 
 function RunRow({ run }: { run: Run }) {
+  const queryClient = useQueryClient();
+  const [triggerOpen, setTriggerOpen] = useState(false);
+  const [toggling, setToggling] = useState(false);
+
+  async function handleToggleActive(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setToggling(true);
+    try {
+      const res = await fetch(`/api/jobs/${run.job_id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: !run.job_active }),
+      });
+      if (!res.ok) { alert("Failed to update job"); return; }
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    } finally {
+      setToggling(false);
+    }
+  }
+
   return (
-    <Link href={`/runs/${run.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
-      <RunStatusIcon status={run.status} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">{run.job_name}</span>
+    <>
+      <Link href={`/runs/${run.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+        <RunStatusIcon status={run.status} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">{run.job_name}</span>
+          </div>
+          <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground">
+            <Bot className="h-3 w-3" />
+            <span>{run.agent_name}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground">
-          <Bot className="h-3 w-3" />
-          <span>{run.agent_name}</span>
+        <span className="text-xs text-muted-foreground shrink-0">{timeAgo(run.completed_at || run.updated_at)}</span>
+        <div className="flex items-center gap-1 shrink-0">
+          <Button
+            variant="ghost" size="icon" className="h-7 w-7"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setTriggerOpen(true); }}
+            title="Trigger run"
+          >
+            <Zap className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost" size="icon" className="h-7 w-7"
+            onClick={handleToggleActive}
+            disabled={toggling}
+            title={run.job_active ? "Pause job" : "Resume job"}
+          >
+            {run.job_active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+          </Button>
         </div>
-      </div>
-      <span className="text-xs text-muted-foreground shrink-0">{timeAgo(run.completed_at || run.updated_at)}</span>
-    </Link>
+      </Link>
+      <TriggerDialog jobId={run.job_id} jobName={run.job_name} open={triggerOpen} onOpenChange={setTriggerOpen} />
+    </>
   );
 }
 

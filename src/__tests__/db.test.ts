@@ -53,6 +53,9 @@ import {
   deleteRow,
   linkDatabaseToJob,
   unlinkDatabaseFromJob,
+  triggerJobRun,
+  listScheduledRuns,
+  listRunningRuns,
 } from "@/lib/db/queries";
 
 // ---------------------------------------------------------------------------
@@ -749,5 +752,134 @@ describe("/next Payload", () => {
     expect(payload!.docs).toHaveLength(1);
     expect((payload!.docs[0] as any).title).toBe("Brand Guide");
     expect(payload!.data.history).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
+// Trigger Job Run
+// ===========================================================================
+
+describe("Trigger Job Run", () => {
+  let agentId: string;
+  let jobId: string;
+
+  beforeEach(() => {
+    agentId = seedAgent().id;
+    jobId = seedJob(agentId)!.id;
+  });
+
+  it("should create a scheduled run", () => {
+    const result = triggerJobRun(jobId);
+    expect(result).not.toBeNull();
+    expect(result!.jobId).toBe(jobId);
+    expect(result!.runId).toBeDefined();
+
+    const run = getRunById(result!.runId);
+    expect(run.status).toBe("scheduled");
+  });
+
+  it("should create a run without extra instructions", () => {
+    const result = triggerJobRun(jobId);
+    const run = getRunById(result!.runId);
+    expect(run.extra_instructions).toBeNull();
+  });
+
+  it("should store extra instructions on the run", () => {
+    const result = triggerJobRun(jobId, "Focus on error handling");
+    const run = getRunById(result!.runId);
+    expect(run.extra_instructions).toBe("Focus on error handling");
+  });
+
+  it("should return null for non-existent job", () => {
+    expect(triggerJobRun("non-existent")).toBeNull();
+  });
+
+  it("should include extra instructions in /next payload", () => {
+    const job = createJob(agentId, {
+      name: "Triggered Job",
+      instructions: "Base instructions",
+      schedule: '{"every":60}',
+    });
+
+    triggerJobRun(job!.id, "Extra context for this run");
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.job.instructions).toContain("Base instructions");
+    expect(payload!.job.instructions).toContain("Extra context for this run");
+    expect(payload!.job.instructions).toContain("Additional instructions for this run:");
+  });
+
+  it("should use only extra instructions when job has no instructions", () => {
+    const job = createJob(agentId, {
+      name: "No Instructions Job",
+      schedule: '{"every":60}',
+    });
+
+    triggerJobRun(job!.id, "Only these instructions");
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect(payload!.job.instructions).toBe("Only these instructions");
+  });
+});
+
+// ===========================================================================
+// Run List Queries (job_active field)
+// ===========================================================================
+
+describe("Run List Queries", () => {
+  let agentId: string;
+
+  beforeEach(() => {
+    agentId = seedAgent().id;
+  });
+
+  it("should include job_active in scheduled runs", () => {
+    const job = seedJob(agentId);
+    triggerJobRun(job!.id);
+
+    const scheduled = listScheduledRuns();
+    expect(scheduled).toHaveLength(1);
+    expect((scheduled[0] as any).job_active).toBe(1);
+  });
+
+  it("should reflect paused job in run listing", () => {
+    const job = seedJob(agentId);
+    updateJob(job!.id, { active: false });
+    triggerJobRun(job!.id);
+
+    const scheduled = listScheduledRuns();
+    expect(scheduled).toHaveLength(1);
+    expect((scheduled[0] as any).job_active).toBe(0);
+  });
+
+  it("should include job_active in running runs", () => {
+    const job = seedJob(agentId);
+    createRun(job!.id, agentId);
+
+    const running = listRunningRuns();
+    expect(running).toHaveLength(1);
+    expect((running[0] as any).job_active).toBe(1);
+  });
+
+  it("should include job_active in waiting runs", () => {
+    const job = seedJob(agentId);
+    const run = createRun(job!.id, agentId);
+    updateRunStatus(run!.id, "waiting");
+
+    const waiting = listWaitingRuns();
+    expect(waiting).toHaveLength(1);
+    expect((waiting[0] as any).job_active).toBe(1);
+  });
+
+  it("should include job_active in recent runs", () => {
+    const job = seedJob(agentId);
+    const run = createRun(job!.id, agentId);
+    updateRunStatus(run!.id, "done");
+
+    const recent = listRecentRuns();
+    expect(recent).toHaveLength(1);
+    expect((recent[0] as any).job_active).toBe(1);
   });
 });

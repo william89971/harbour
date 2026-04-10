@@ -23,6 +23,7 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - `src/lib/cli-config.ts` — shared CLI tool config (models, thinking options per tool)
 - `src/lib/runners.ts` — harbour agent runner config (read/write ~/.harbour/runners.json)
 - `src/components/app/create-dialog.tsx` — unified New Run / New Job dialog (shared component)
+- `src/components/app/trigger-dialog.tsx` — shared trigger confirmation modal with optional extra instructions
 - `src/components/app/model-thinking-select.tsx` — shared Model/Thinking select for CLI agents
 - `bin/` — CLI entry point and agent runner (harbour agents, providers, launchd install)
 - `GUIDE.md` — agent-facing API contract, served at `/api/guide`
@@ -42,6 +43,28 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - API routes use `withAuth(handler)` or `withUserAuth(handler)` — never inline auth checks. Agent-facing mutation routes use `requireAgentOwnership()` to enforce scope.
 - Job and run creation functions (`createJob`, `createOneOffRun`, `getAgentNextRun`) are wrapped in transactions.
 - Projects are optional view-layer groupings. Entities don't know about projects — linking tables hold the references. All list queries accept an optional `projectId` filter. Adding a job to a project auto-links its agent, docs, env vars, and databases.
+
+## Development workflow
+
+Production runs on port 3000. Use port 3001 for development to avoid conflicts.
+
+```bash
+# 1. Start dev server
+npm run dev -- -p 3001
+
+# 2. Make changes, then validate
+npm run lint                    # ESLint (pre-existing `any` warnings are expected)
+npm run test                    # Vitest unit tests
+npm run build                   # Next.js production build
+
+# 3. Rebuild and restart production
+kill $(lsof -ti :3000)          # stop current production server
+npm run build                   # rebuild
+npm start -- -p 3000 &          # restart in background
+
+# 4. Stop dev server when done
+kill $(lsof -ti :3001)
+```
 
 ## Browser testing / screenshots
 

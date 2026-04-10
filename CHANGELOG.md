@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.8.0 — 2026-04-09
+
+### Trigger & Pause/Play on Runs Page
+- Pause/play and trigger (zap) buttons now appear on every run row in the runs list
+- Trigger button opens a confirmation dialog with optional additional instructions
+- Pause/play toggles the parent job's active state directly from the run list
+- Job detail page trigger also upgraded from `confirm()` to the shared trigger dialog
+
+### Trigger with Additional Instructions
+- Manual triggers accept optional extra instructions injected alongside job instructions
+- Extra instructions stored on the run and merged into the `/next` payload for agents
+- A system activity message is posted to the run's thread showing the additional context
+- New `extra_instructions` column on runs table, `TriggerDialog` shared component
+
 ## v1.7.0 — 2026-04-09
 
 ### Video Processing & Storyboard

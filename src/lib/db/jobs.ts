@@ -221,7 +221,7 @@ export function createOneOffRun(agentId: string, data: {
   return { jobId, runId };
 }
 
-export function triggerJobRun(jobId: string) {
+export function triggerJobRun(jobId: string, extraInstructions?: string) {
   const db = getDb();
   const job = db.prepare(`SELECT id, agent_id FROM jobs WHERE id = ?`).get(jobId) as any;
   if (!job) return null;
@@ -230,9 +230,16 @@ export function triggerJobRun(jobId: string) {
   const now = Math.floor(Date.now() / 1000);
 
   db.prepare(`
-    INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, created_at, updated_at)
-    VALUES (?, ?, ?, 'scheduled', ?, ?, ?)
-  `).run(runId, jobId, job.agent_id, now, now, now);
+    INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, extra_instructions, created_at, updated_at)
+    VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?)
+  `).run(runId, jobId, job.agent_id, now, extraInstructions || null, now, now);
+
+  if (extraInstructions) {
+    db.prepare(`
+      INSERT INTO run_activity (id, run_id, author_type, author_name, content, created_at)
+      VALUES (?, ?, 'system', 'System', ?, ?)
+    `).run(uuid(), runId, `Additional instructions:\n${extraInstructions}`, now);
+  }
 
   return { jobId, runId };
 }

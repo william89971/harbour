@@ -456,6 +456,12 @@ export function initializeSchema(db: Database.Database) {
     `);
   }
 
+  // Migrations: add extra_instructions column to runs (for triggered runs with additional context)
+  const runCols = db.prepare(`PRAGMA table_info(runs)`).all() as any[];
+  if (!runCols.some((c: any) => c.name === "extra_instructions")) {
+    db.exec(`ALTER TABLE runs ADD COLUMN extra_instructions TEXT`);
+  }
+
   // Ensure encryption key exists (generates on first run)
   try { encrypt("init"); } catch { /* non-fatal */ }
 

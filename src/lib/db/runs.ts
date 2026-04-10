@@ -110,7 +110,7 @@ export function listScheduledRuns(projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.active as job_active, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN agents a ON r.agent_id = a.id
@@ -123,7 +123,7 @@ export function listRunningRuns(projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.active as job_active, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN agents a ON r.agent_id = a.id
@@ -136,7 +136,7 @@ export function listWaitingRuns(projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.active as job_active, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN agents a ON r.agent_id = a.id
@@ -149,7 +149,7 @@ export function listRecentRuns(limit = 10, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.active as job_active, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN agents a ON r.agent_id = a.id
@@ -396,12 +396,20 @@ function buildRunPayload(runId: string) {
   // Run attachments (raw rows; the route serializer adds absolute URLs)
   const attachments = listAttachmentsByRun(run.id);
 
+  // Combine job instructions with any extra trigger-time instructions
+  let instructions = job.instructions || null;
+  if (run.extra_instructions) {
+    instructions = instructions
+      ? `${instructions}\n\n---\n\nAdditional instructions for this run:\n${run.extra_instructions}`
+      : run.extra_instructions;
+  }
+
   return {
     run: { id: run.id, status: run.status, activity: run.activity },
     job: {
       id: job.id,
       name: job.name,
-      instructions: job.instructions,
+      instructions,
       check: job.check_command,
       model: job.model || null,
       thinking: job.thinking || null,

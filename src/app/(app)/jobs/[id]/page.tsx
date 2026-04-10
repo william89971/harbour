@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
+import { TriggerDialog } from "@/components/app/trigger-dialog";
 import { useApp } from "@/components/app/app-context";
 import { SchedulePicker, parseSchedule, serializeSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
@@ -206,21 +207,7 @@ export default function JobDetailPage() {
     queryClient.invalidateQueries({ queryKey: ["jobs", id] });
   }
 
-  const [triggering, setTriggering] = useState(false);
-
-  async function handleTrigger() {
-    if (!job) return;
-    if (!confirm(`Trigger "${job.name}" now?`)) return;
-    setTriggering(true);
-    try {
-      const res = await fetch(`/api/jobs/${id}/trigger`, { method: "POST" });
-      if (!res.ok) { alert("Failed to trigger run"); return; }
-      queryClient.invalidateQueries({ queryKey: ["runs"] });
-      queryClient.invalidateQueries({ queryKey: ["jobs", id] });
-    } finally {
-      setTriggering(false);
-    }
-  }
+  const [showTrigger, setShowTrigger] = useState(false);
 
   async function handleDelete() {
     if (!confirm(`Delete "${job?.name}"? All run history will be lost.`)) return;
@@ -245,7 +232,7 @@ export default function JobDetailPage() {
           {job.description && <p className="text-sm text-muted-foreground mt-0.5">{job.description}</p>}
         </div>
         <div className="flex gap-1.5">
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleTrigger} disabled={triggering} title="Trigger run now">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowTrigger(true)} title="Trigger run now">
             <Zap className="h-3.5 w-3.5" />
           </Button>
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleToggleActive} title={job.active ? "Pause" : "Resume"}>
@@ -500,6 +487,9 @@ export default function JobDetailPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Trigger Dialog */}
+      <TriggerDialog jobId={id} jobName={job.name} open={showTrigger} onOpenChange={setShowTrigger} />
     </div>
   );
 }
