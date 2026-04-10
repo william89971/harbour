@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.7.0 — 2026-04-09
+
+### Video Processing & Storyboard
+- Auto-process uploaded videos into screenshots (ffmpeg) and transcripts (Whisper, OpenAI, Gemini)
+- Transcript providers now return timestamped segments for time-aligned output
+- Storyboard generation pairs each screenshot with its corresponding transcript text by time window
+- `/next` endpoint includes storyboard field so agents see screenshots + transcript interleaved
+- Transcript API serves storyboard by default (`?format=plain` for raw text)
+- Processing status, screenshot gallery, and transcript viewer on the run detail page
+- Manual Process/Retry buttons for video attachments
+- Video processing settings: auto-process toggle, screenshot interval, transcript provider, API keys
+
+### Inline Attachments & One-Off Run Attachments
+- Attachments now appear inline in the activity feed (Slack-style) instead of a separate section
+- Attach files when creating one-off runs — staged locally, uploaded on submit
+- Docs, Env Vars, and Attachments sections restyled as card-like areas with better visibility
+- "When" picker moved to the bottom of the run creation dialog
+
+### Safari File Input Fix
+- File input rendered outside dialog portal to avoid Base UI event interference
+- Uses ref-based state to prevent stale closures on form submission
+- Client-side file size validation with inline error display
+- Server-side upload errors surfaced via alert instead of silently swallowed
+
+### Other Changes
+- Default max upload size increased from 100MB to 500MB (`HARBOUR_MAX_UPLOAD_MB`)
+- Extracted `normalizeSegments` helper to DRY transcript provider code
+
 ## v1.6.0 — 2026-04-09
 
 ### Kill Running Runs
