@@ -93,3 +93,20 @@ playwright-cli eval "js expression"  # run JS in page context
 ```
 
 Dev server runs on port 3001 (`npm run dev -- -p 3001`) to avoid conflicting with a production server on 3000.
+
+## Parallel development (git worktrees)
+
+Use `claude --worktree <name>` to run multiple Claude Code sessions in parallel. Each worktree gets its own branch (`worktree-<name>`) and isolated file tree.
+
+```bash
+claude --worktree feature-auth       # Terminal 1
+claude --worktree bugfix-notifs      # Terminal 2
+claude                               # Terminal 3 — main repo on current branch
+```
+
+- Each worktree needs its own `npm install`.
+- `.worktreeinclude` copies `.env` / `.env.local` to new worktrees automatically.
+- All worktrees share the same `~/.harbour/harbour.db` by default. For isolated databases, set `HARBOUR_DB_PATH` in a per-worktree `.env`.
+- Use different ports if running dev servers in multiple worktrees.
+- Merge back via PR: `git push origin worktree-<name>` then `gh pr create`.
+- Cleanup: worktrees with no changes are auto-removed on session exit. Otherwise `git worktree remove .claude/worktrees/<name>`.

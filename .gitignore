@@ -47,3 +47,6 @@ harbour.db-shm
 
 # playwright
 .playwright-cli/
+
+# claude code worktrees
+.claude/worktrees/
