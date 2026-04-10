@@ -437,6 +437,15 @@ export function initializeSchema(db: Database.Database) {
     `);
   }
 
+  // Migrations: add session_id and session_cwd columns to runs (CLI session for resume)
+  const runCols = db.prepare(`PRAGMA table_info(runs)`).all() as any[];
+  if (!runCols.some((c: any) => c.name === "session_id")) {
+    db.exec(`ALTER TABLE runs ADD COLUMN session_id TEXT`);
+  }
+  if (!runCols.some((c: any) => c.name === "session_cwd")) {
+    db.exec(`ALTER TABLE runs ADD COLUMN session_cwd TEXT`);
+  }
+
   // Ensure encryption key exists (generates on first run)
   try { encrypt("init"); } catch { /* non-fatal */ }
 

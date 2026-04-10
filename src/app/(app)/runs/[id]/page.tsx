@@ -11,7 +11,7 @@ import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
-import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban } from "lucide-react";
+import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Copy, Check } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { StatusBadge } from "@/components/app/run-status";
 import { AttachmentComposer, type AttachmentComposerHandle } from "@/components/app/attachment-composer";
@@ -27,7 +27,8 @@ type Activity = {
 
 type Run = {
   id: string; job_id: string; agent_id: string; status: string;
-  job_name: string; agent_name: string; agent_type: string; one_off: number;
+  job_name: string; agent_name: string; agent_type: string; agent_cli: string | null;
+  session_id: string | null; session_cwd: string | null; one_off: number;
   created_at: number; updated_at: number; completed_at: number | null;
   kill_requested_at: number | null;
   activity: Activity[];
@@ -51,7 +52,7 @@ function AuthorIcon({ type }: { type: string }) {
   }
 }
 
-function LiveOutput({ runId, status }: { runId: string; status: string }) {
+function LiveOutput({ runId, status, resumeCommand }: { runId: string; status: string; resumeCommand?: React.ReactNode }) {
   const [events, setEvents] = useState<OutputEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -123,7 +124,7 @@ function LiveOutput({ runId, status }: { runId: string; status: string }) {
     }
   }, [events]);
 
-  if (events.length === 0 && !isActive) return null;
+  if (events.length === 0 && !isActive && !resumeCommand) return null;
 
   return (
     <div className="space-y-1">
@@ -144,6 +145,7 @@ function LiveOutput({ runId, status }: { runId: string; status: string }) {
           </span>
         )}
       </div>
+      {resumeCommand}
       <div
         ref={scrollRef}
         className="bg-zinc-950 rounded-lg border border-zinc-800 p-3 font-mono text-xs max-h-[500px] overflow-y-auto"
@@ -204,6 +206,42 @@ function OutputLine({ event }: { event: OutputEvent }) {
     default:
       return <span className="text-zinc-400 whitespace-pre-wrap">{event.content}</span>;
   }
+}
+
+function getResumeCommand(cli: string, sessionId: string, cwd?: string | null): string {
+  let resume: string;
+  switch (cli) {
+    case "claude": resume = `claude --resume ${sessionId}`; break;
+    case "codex": resume = `codex exec resume ${sessionId}`; break;
+    case "gemini": resume = `gemini --resume ${sessionId}`; break;
+    default: resume = `${cli} --resume ${sessionId}`;
+  }
+  return cwd ? `cd ${cwd} && ${resume}` : resume;
+}
+
+function ResumeCommand({ cli, sessionId, cwd }: { cli: string; sessionId: string; cwd?: string | null }) {
+  const [copied, setCopied] = useState(false);
+  const command = getResumeCommand(cli, sessionId, cwd);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(command);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 font-mono text-xs">
+      <Terminal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+      <code className="flex-1 truncate text-muted-foreground select-all">{command}</code>
+      <button
+        onClick={handleCopy}
+        className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+        title="Copy to clipboard"
+      >
+        {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+      </button>
+    </div>
+  );
 }
 
 export default function RunDetailPage() {
@@ -450,7 +488,15 @@ export default function RunDetailPage() {
       )}
 
       {/* Live Output (harbour agents only) */}
-      {run.agent_type === "harbour" && <LiveOutput runId={run.id} status={run.status} />}
+      {run.agent_type === "harbour" && (
+        <LiveOutput
+          runId={run.id}
+          status={run.status}
+          resumeCommand={run.session_id && run.agent_cli ? (
+            <ResumeCommand cli={run.agent_cli} sessionId={run.session_id} cwd={run.session_cwd} />
+          ) : undefined}
+        />
+      )}
     </div>
   );
 }

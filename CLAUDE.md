@@ -43,17 +43,32 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - Job and run creation functions (`createJob`, `createOneOffRun`, `getAgentNextRun`) are wrapped in transactions.
 - Projects are optional view-layer groupings. Entities don't know about projects — linking tables hold the references. All list queries accept an optional `projectId` filter. Adding a job to a project auto-links its agent, docs, env vars, and databases.
 
+## Dev server
+
+Always start a dev server before testing UI changes locally or using the playwright-browser skill. Check which ports are in use first, then pick an available one:
+
+- **Port 3000** — production server (reserved, never use for dev)
+- **Port 3001** — main repo dev server (`npm run dev -- -p 3001`)
+- **Ports 3010-3020** — worktree dev servers (one per worktree)
+
+Before starting a dev server, run `lsof -iTCP:3010-3020 -sTCP:LISTEN` to see which ports are already taken, then use the lowest available port in the range.
+
+```bash
+# Start dev server in a worktree (pick an available port from 3010-3020)
+npm run dev -- -p 3010
+```
+
 ## Browser testing / screenshots
 
-Use `playwright-cli` for visual review and screenshots. Key flow:
+Use `playwright-cli` for visual review and screenshots. The dev server must be running first (see above).
 
 ```bash
 # Open browser and navigate (browser persists across commands)
-playwright-cli open "http://localhost:3001/some-page"
+playwright-cli open "http://localhost:3010/some-page"
 
 # Auth: set session cookie (get a valid session ID from the sessions table)
 playwright-cli eval "document.cookie = 'harbour_session=SESSION_ID; path=/'"
-playwright-cli goto "http://localhost:3001/some-page"  # reload with auth
+playwright-cli goto "http://localhost:3010/some-page"  # reload with auth
 
 # Screenshots
 playwright-cli screenshot --full-page --filename /tmp/screenshot.png
@@ -67,5 +82,3 @@ playwright-cli snapshot           # accessibility tree (element refs)
 playwright-cli click <ref>        # interact with elements
 playwright-cli eval "js expression"  # run JS in page context
 ```
-
-Dev server runs on port 3001 (`npm run dev -- -p 3001`) to avoid conflicting with a production server on 3000.

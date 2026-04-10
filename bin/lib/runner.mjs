@@ -249,8 +249,12 @@ async function runSingleAgent(runner) {
   const isNewSession = !isResume;
 
   // For Claude, generate a session ID upfront so we can always resume
+  const workingDir = ensureWorkingDir(agentName);
   if (isNewSession && provider.generateSessionId) {
     sessionId = provider.generateSessionId();
+    // Report pre-generated session ID immediately
+    apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", { session_id: sessionId, cwd: workingDir })
+      .catch(err => console.error(`  [${agentName}] Failed to report session ID: ${err.message}`));
   }
 
   console.log(`  [${agentName}] ${isResume ? "Resuming" : "Starting"} run ${runId} (${payload.job?.name || "one-off"})`);
@@ -258,7 +262,6 @@ async function runSingleAgent(runner) {
   // Execute pre-run check command (if defined) before invoking the LLM
   let checkOutput = "";
   if (!isResume && payload.job?.check) {
-    const workingDir = ensureWorkingDir(agentName);
     try {
       const checkResult = await runCheckCommand(payload.job.check, JSON.stringify(payload), workingDir);
       if (checkResult.code !== 0) {
@@ -290,7 +293,6 @@ async function runSingleAgent(runner) {
   // Build CLI command — job-level model/thinking override agent defaults
   const model = payload.job?.model || agentModel;
   const thinking = payload.job?.thinking || agentThinking;
-  const workingDir = ensureWorkingDir(agentName);
   const cmd = provider.buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking);
 
   // Batch streaming events and flush to Harbour periodically
@@ -347,6 +349,7 @@ async function runSingleAgent(runner) {
   }
 
   // Line handler: parse each JSONL line from the CLI tool
+  let sessionReported = !!sessionId; // already reported if pre-generated
   function onLine(line) {
     if (!provider.parseLine) return;
     const parsed = provider.parseLine(line);
@@ -357,6 +360,13 @@ async function runSingleAgent(runner) {
       sessionId = parsed.sessionId;
     } else if (parsed.sessionId) {
       sessionId = parsed.sessionId;
+    }
+
+    // Report session ID to the server (once) so it's available on the dashboard
+    if (sessionId && !sessionReported) {
+      sessionReported = true;
+      apiCall(`${url}/api/runs/${runId}/session`, apiKey, "PUT", { session_id: sessionId, cwd: workingDir })
+        .catch(err => console.error(`  [${agentName}] Failed to report session ID: ${err.message}`));
     }
 
     for (const evt of parsed.events) {

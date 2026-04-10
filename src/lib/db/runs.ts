@@ -17,7 +17,7 @@ export function createRun(jobId: string, agentId: string) {
 export function getRunById(id: string) {
   const db = getDb();
   const run = db.prepare(`
-    SELECT r.*, j.name as job_name, j.one_off, j.agent_id, a.name as agent_name, a.type as agent_type
+    SELECT r.*, j.name as job_name, j.one_off, j.agent_id, a.name as agent_name, a.type as agent_type, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
     JOIN agents a ON r.agent_id = a.id
@@ -76,6 +76,15 @@ export function requestKillRun(id: string): boolean {
   if (run.kill_requested_at) return true; // already requested — idempotent
   db.prepare(`UPDATE runs SET kill_requested_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(id);
   return true;
+}
+
+export function updateRunSessionId(id: string, sessionId: string, cwd?: string) {
+  const db = getDb();
+  if (cwd) {
+    db.prepare(`UPDATE runs SET session_id = ?, session_cwd = ?, updated_at = unixepoch() WHERE id = ?`).run(sessionId, cwd, id);
+  } else {
+    db.prepare(`UPDATE runs SET session_id = ?, updated_at = unixepoch() WHERE id = ?`).run(sessionId, id);
+  }
 }
 
 export function isKillRequested(id: string): boolean {
