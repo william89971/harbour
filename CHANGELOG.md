@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.9.0 — 2026-04-10
 
 ### Run Detail Actions
 - Dropdown menu on finished and waiting runs to change status (done/failed/skipped/killed/waiting) or delete the run
@@ -9,6 +9,9 @@
 ### Copyable Resume Command
 - Run detail page shows a ready-to-paste CLI resume command for harbour-agent runs (e.g. `cd ... && claude --resume <id>`)
 - Runner reports session ID and working directory via `PUT /api/runs/:id/session`
+
+### Console Output
+- Tool call details now shown in harbour-agent console output — displays the actual tool invocation (command, file path, pattern) instead of just the tool name for Claude Code agents
 
 ## v1.8.0 — 2026-04-09
 
