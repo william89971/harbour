@@ -456,10 +456,16 @@ export function initializeSchema(db: Database.Database) {
     `);
   }
 
-  // Migrations: add extra_instructions column to runs (for triggered runs with additional context)
+  // Migrations: add extra_instructions, session_id, session_cwd columns to runs
   const runCols = db.prepare(`PRAGMA table_info(runs)`).all() as any[];
   if (!runCols.some((c: any) => c.name === "extra_instructions")) {
     db.exec(`ALTER TABLE runs ADD COLUMN extra_instructions TEXT`);
+  }
+  if (!runCols.some((c: any) => c.name === "session_id")) {
+    db.exec(`ALTER TABLE runs ADD COLUMN session_id TEXT`);
+  }
+  if (!runCols.some((c: any) => c.name === "session_cwd")) {
+    db.exec(`ALTER TABLE runs ADD COLUMN session_cwd TEXT`);
   }
 
   // Ensure encryption key exists (generates on first run)

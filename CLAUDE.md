@@ -44,40 +44,47 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - Job and run creation functions (`createJob`, `createOneOffRun`, `getAgentNextRun`) are wrapped in transactions.
 - Projects are optional view-layer groupings. Entities don't know about projects — linking tables hold the references. All list queries accept an optional `projectId` filter. Adding a job to a project auto-links its agent, docs, env vars, and databases.
 
-## Development workflow
+## Dev server
 
-Production runs on port 3000. Use port 3001 for development to avoid conflicts.
+Always start a dev server before testing UI changes locally or using the playwright-browser skill. Check which ports are in use first, then pick an available one:
+
+- **Port 3000** — production server (reserved, never use for dev)
+- **Port 3001** — main repo dev server (`npm run dev -- -p 3001`)
+- **Ports 3010-3020** — worktree dev servers (one per worktree)
+
+Before starting a dev server, run `lsof -iTCP:3010-3020 -sTCP:LISTEN` to see which ports are already taken, then use the lowest available port in the range.
 
 ```bash
-# 1. Start dev server
-npm run dev -- -p 3001
+# Start dev server in a worktree (pick an available port from 3010-3020)
+npm run dev -- -p 3010
+```
 
-# 2. Make changes, then validate
+## Development workflow
+
+```bash
+# 1. Make changes, then validate
 npm run lint                    # ESLint (pre-existing `any` warnings are expected)
 npm run test                    # Vitest unit tests
 npm run build                   # Next.js production build
 
-# 3. Rebuild and restart production (REQUIRED after every change — the
+# 2. Rebuild and restart production (REQUIRED after every change — the
 #    running server won't pick up a new build until restarted)
 kill $(lsof -ti :3000)          # stop current production server
 npm run build                   # rebuild
 npm start -- -p 3000 &          # restart in background
-
-# 4. Stop dev server when done
-kill $(lsof -ti :3001)
 ```
 
 ## Browser testing / screenshots
 
-Use `playwright-cli` for visual review and screenshots. Key flow:
+Use `playwright-cli` for visual review and screenshots. The dev server must be running first (see above).
 
 ```bash
 # Open browser and navigate (browser persists across commands)
-playwright-cli open "http://localhost:3001/some-page"
+playwright-cli open "http://localhost:3010/some-page"
 
 # Auth: set session cookie (get a valid session ID from the sessions table)
 playwright-cli eval "document.cookie = 'harbour_session=SESSION_ID; path=/'"
-playwright-cli goto "http://localhost:3001/some-page"  # reload with auth
+playwright-cli goto "http://localhost:3010/some-page"  # reload with auth
 
 # Screenshots
 playwright-cli screenshot --full-page --filename /tmp/screenshot.png
@@ -92,8 +99,6 @@ playwright-cli click <ref>        # interact with elements
 playwright-cli eval "js expression"  # run JS in page context
 ```
 
-Dev server runs on port 3001 (`npm run dev -- -p 3001`) to avoid conflicting with a production server on 3000.
-
 ## Parallel development (git worktrees)
 
 Use `claude --worktree <name>` to run multiple Claude Code sessions in parallel. Each worktree gets its own branch (`worktree-<name>`) and isolated file tree.
@@ -107,6 +112,6 @@ claude                               # Terminal 3 — main repo on current branc
 - Each worktree needs its own `npm install`.
 - `.worktreeinclude` copies `.env` / `.env.local` to new worktrees automatically.
 - All worktrees share the same `~/.harbour/harbour.db` by default. For isolated databases, set `HARBOUR_DB_PATH` in a per-worktree `.env`.
-- Use different ports if running dev servers in multiple worktrees.
+- Use different ports if running dev servers in multiple worktrees (3010-3020 range).
 - Merge back via PR: `git push origin worktree-<name>` then `gh pr create`.
 - Cleanup: worktrees with no changes are auto-removed on session exit. Otherwise `git worktree remove .claude/worktrees/<name>`.
