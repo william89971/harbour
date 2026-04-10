@@ -26,6 +26,31 @@ function resolveBinary(name) {
 //   error        — error message
 //   result       — final summary
 
+// Extract a concise display string from a tool's input JSON.
+function formatToolInput(toolName, inputJson) {
+  if (!inputJson) return null;
+  try {
+    const input = JSON.parse(inputJson);
+    switch (toolName) {
+      case "Bash": return input.command || null;
+      case "Read": return input.file_path || null;
+      case "Write": return input.file_path || null;
+      case "Edit": return input.file_path || null;
+      case "Grep": return input.pattern || null;
+      case "Glob": return input.pattern || null;
+      case "Agent": return input.description || null;
+      case "WebSearch": return input.query || null;
+      case "WebFetch": return input.url || null;
+      default: {
+        const str = JSON.stringify(input);
+        return str.length > 200 ? str.slice(0, 200) + "..." : str;
+      }
+    }
+  } catch {
+    return null;
+  }
+}
+
 // Provider: how to invoke each CLI tool in batch mode, with streaming support
 
 const PROVIDERS = {
@@ -51,61 +76,86 @@ const PROVIDERS = {
       args.push(prompt);
       return { binary: resolveBinary("claude"), args, cwd: workingDir };
     },
-    // Parse a single JSONL line into normalized events
-    parseLine(line) {
-      try {
-        const obj = JSON.parse(line);
-        const events = [];
+    // Returns a stateful parser that accumulates tool input from streaming
+    // deltas before emitting tool_start with the full input content.
+    createParser() {
+      // Track in-flight tool_use blocks: index → { toolName, inputJson }
+      const activeBlocks = new Map();
 
-        if (obj.type === "system" && obj.subtype === "init") {
-          events.push({ event_type: "info", content: `Model: ${obj.model}` });
-          return { events, sessionId: obj.session_id };
-        }
+      return {
+        parseLine(line) {
+          try {
+            const obj = JSON.parse(line);
+            const events = [];
 
-        if (obj.type === "stream_event" && obj.event) {
-          const evt = obj.event;
-          if (evt.type === "content_block_delta") {
-            if (evt.delta?.type === "text_delta" && evt.delta.text) {
-              events.push({ event_type: "text_delta", content: evt.delta.text });
+            if (obj.type === "system" && obj.subtype === "init") {
+              events.push({ event_type: "info", content: `Model: ${obj.model}` });
+              return { events, sessionId: obj.session_id };
             }
-            if (evt.delta?.type === "thinking_delta" && evt.delta.thinking) {
-              events.push({ event_type: "thinking", content: evt.delta.thinking });
-            }
-          }
-          if (evt.type === "content_block_start" && evt.content_block?.type === "tool_use") {
-            events.push({
-              event_type: "tool_start",
-              content: null,
-              tool_name: evt.content_block.name,
-            });
-          }
-        }
 
-        // Tool result comes as an assistant message with tool_result content
-        if (obj.type === "assistant" && obj.message?.content) {
-          for (const block of obj.message.content) {
-            if (block.type === "tool_result") {
+            if (obj.type === "stream_event" && obj.event) {
+              const evt = obj.event;
+              if (evt.type === "content_block_delta") {
+                if (evt.delta?.type === "text_delta" && evt.delta.text) {
+                  events.push({ event_type: "text_delta", content: evt.delta.text });
+                }
+                if (evt.delta?.type === "thinking_delta" && evt.delta.thinking) {
+                  events.push({ event_type: "thinking", content: evt.delta.thinking });
+                }
+                // Accumulate tool input JSON fragments
+                if (evt.delta?.type === "input_json_delta" && evt.delta.partial_json != null) {
+                  const block = activeBlocks.get(evt.index);
+                  if (block) block.inputJson += evt.delta.partial_json;
+                }
+              }
+              // Register tool block — defer tool_start until input is assembled
+              if (evt.type === "content_block_start" && evt.content_block?.type === "tool_use") {
+                activeBlocks.set(evt.index, {
+                  toolName: evt.content_block.name,
+                  inputJson: "",
+                });
+              }
+              // Input fully assembled — emit tool_start with content
+              if (evt.type === "content_block_stop") {
+                const block = activeBlocks.get(evt.index);
+                if (block) {
+                  activeBlocks.delete(evt.index);
+                  events.push({
+                    event_type: "tool_start",
+                    content: formatToolInput(block.toolName, block.inputJson),
+                    tool_name: block.toolName,
+                  });
+                }
+              }
+            }
+
+            // Tool result comes as an assistant message with tool_result content
+            if (obj.type === "assistant" && obj.message?.content) {
+              for (const block of obj.message.content) {
+                if (block.type === "tool_result") {
+                  events.push({
+                    event_type: "tool_end",
+                    content: typeof block.content === "string" ? block.content : JSON.stringify(block.content),
+                    tool_name: null,
+                  });
+                }
+              }
+            }
+
+            if (obj.type === "result") {
               events.push({
-                event_type: "tool_end",
-                content: typeof block.content === "string" ? block.content : JSON.stringify(block.content),
-                tool_name: null,
+                event_type: "result",
+                content: obj.result || null,
               });
+              return { events, sessionId: obj.session_id };
             }
+
+            return { events };
+          } catch {
+            return { events: [] };
           }
-        }
-
-        if (obj.type === "result") {
-          events.push({
-            event_type: "result",
-            content: obj.result || null,
-          });
-          return { events, sessionId: obj.session_id };
-        }
-
-        return { events };
-      } catch {
-        return { events: [] };
-      }
+        },
+      };
     },
     parseResult(stdout, presetSessionId) {
       // Fallback full-parse for final content extraction

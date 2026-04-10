@@ -186,7 +186,7 @@ function OutputLine({ event }: { event: OutputEvent }) {
         <div className="text-amber-400/80 mt-1.5 mb-0.5">
           <span className="text-amber-500">{">"}</span>{" "}
           {event.tool_name && <span className="font-semibold">{event.tool_name}</span>}
-          {event.content && <span className="text-zinc-400 ml-1">{event.content}</span>}
+          {event.content && <span className="text-zinc-400 ml-1 whitespace-pre-wrap break-all">{event.content.length > 300 ? event.content.slice(0, 300) + "..." : event.content}</span>}
         </div>
       );
     case "tool_end":

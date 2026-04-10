@@ -348,11 +348,17 @@ async function runSingleAgent(runner) {
     }
   }
 
+  // Create a stateful parser if the provider supports it (e.g. Claude
+  // accumulates tool input deltas), otherwise fall back to stateless parseLine.
+  const parser = provider.createParser
+    ? provider.createParser()
+    : provider;
+
   // Line handler: parse each JSONL line from the CLI tool
   let sessionReported = !!sessionId; // already reported if pre-generated
   function onLine(line) {
-    if (!provider.parseLine) return;
-    const parsed = provider.parseLine(line);
+    if (!parser.parseLine) return;
+    const parsed = parser.parseLine(line);
     if (!parsed) return;
 
     // Capture session ID from init events
