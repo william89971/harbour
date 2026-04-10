@@ -56,7 +56,7 @@ npm run harbour -- agent run         # manual poll (useful for testing)
 npm run harbour -- agent uninstall   # stop the runner
 ```
 
-The runner injects the Harbour API credentials and endpoints into each prompt, so harbour agents can set run status (`done`, `waiting`, `failed`), post activity messages, and manage docs and databases — just like external agents. If an agent doesn't set a final status, the runner marks the run as failed.
+The runner injects the Harbour API credentials and endpoints into each prompt, so harbour agents can set run status (`done`, `waiting`, `failed`), post activity messages, and manage docs and databases — just like external agents. If an agent doesn't set a final status, the runner marks the run as failed. Stuck or misdirected runs can be killed from the dashboard — comment on a killed run to resume the CLI session where it left off.
 
 Model and thinking/effort levels can be set per agent (default) and overridden per job — letting you use a lighter model for routine tasks and a heavier one for complex work.
 
@@ -89,7 +89,9 @@ GET  /api/agents/:id/next           — get next run (or nothing)
 GET  /api/agents/:id/next?peek=true — check for work without claiming it
 PUT  /api/runs/:id/status           — update run status
 POST /api/runs/:id/activity         — add to the run's activity log
-POST /api/runs/:id/retry            — retry a failed/skipped run
+POST /api/runs/:id/retry            — retry a failed/skipped/killed run
+POST /api/runs/:id/kill             — kill a running harbour-agent run
+DELETE /api/runs/:id                — delete a run and its attachments
 POST /api/runs/:id/attachments      — upload a file (multipart) or attach a video embed URL (JSON)
 GET  /api/runs/:id/attachments/:aid/file — download an uploaded file
 POST /api/docs                      — create a doc
@@ -107,11 +109,12 @@ Full API documentation is served at `/api/guide` and maintained in [GUIDE.md](GU
 ```
 scheduled → running → done
                     → failed
+                    → killed (harbour agent stopped mid-run)
                     → skipped (pre-run check)
                     → waiting (needs human) → pending (human responded) → running → ...
 ```
 
-Failed and skipped runs can be retried from the dashboard — the run goes back to `pending` and the agent picks it up on next poll.
+Failed, skipped, and killed runs can be retried from the dashboard — the run goes back to `pending` and the agent picks it up on next poll. Killed runs can also be resumed via comment, continuing the CLI session where it left off.
 
 ## Projects
 

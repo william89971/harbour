@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Run Detail Actions
+- Dropdown menu on finished and waiting runs to change status (done/failed/skipped/killed/waiting) or delete the run
+- New `DELETE /api/runs/:id` endpoint with attachment cleanup
+
+### Copyable Resume Command
+- Run detail page shows a ready-to-paste CLI resume command for harbour-agent runs (e.g. `cd ... && claude --resume <id>`)
+- Runner reports session ID and working directory via `PUT /api/runs/:id/session`
+
 ## v1.8.0 — 2026-04-09
 
 ### Trigger & Pause/Play on Runs Page
