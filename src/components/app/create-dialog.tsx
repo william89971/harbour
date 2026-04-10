@@ -414,11 +414,10 @@ export function CreateDialog({
                       <Paperclip className="h-3.5 w-3.5" />
                       Attachments
                     </div>
-                    <button type="button" onClick={() => { console.log("[attach] Add clicked, ref exists:", !!runFileInputRef.current); runFileInputRef.current?.click(); console.log("[attach] .click() called"); }} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium transition-colors cursor-pointer">
+                    <button type="button" onClick={() => runFileInputRef.current?.click()} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium transition-colors cursor-pointer">
                       <Plus className="h-3 w-3" /> Add
                     </button>
                   </div>
-                  {console.log("[attach] render, stagedFiles.length:", stagedFiles.length)}
                   {stagedFiles.length === 0 ? (
                     <p className="text-xs text-muted-foreground mt-1.5">No files attached.</p>
                   ) : (
@@ -508,18 +507,11 @@ export function CreateDialog({
         multiple
         style={{ position: "fixed", top: -100, left: -100, opacity: 0 }}
         onChange={e => {
-          console.log("[attach] onChange fired, files:", e.target.files?.length);
           const files = e.target.files ? Array.from(e.target.files) : [];
-          console.log("[attach] captured files:", files.map(f => f.name + " (" + f.size + "b)"));
           if (files.length > 0) {
-            setStagedFiles(prev => {
-              const next = [...prev, ...files];
-              console.log("[attach] setStagedFiles prev:", prev.length, "next:", next.length);
-              return next;
-            });
+            setStagedFiles(prev => [...prev, ...files]);
           }
           e.target.value = "";
-          console.log("[attach] input cleared");
         }}
       />
 

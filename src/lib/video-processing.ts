@@ -199,6 +199,14 @@ async function extractScreenshots(videoPath: string, outDir: string, intervalSec
 
 type TranscriptSegment = { start: number; end: number; text: string };
 
+function normalizeSegments(raw: any[]): TranscriptSegment[] {
+  return raw.map(s => ({
+    start: Number(s.start) || 0,
+    end: Number(s.end) || 0,
+    text: (s.text || "").trim(),
+  }));
+}
+
 // ── Transcript providers ────────────────────────────────────────────
 
 async function extractTranscript(videoPath: string, outDir: string, provider: string): Promise<string> {
@@ -258,12 +266,7 @@ async function transcribeWithWhisper(audioPath: string, outDir: string): Promise
   // Clean up whisper's output file
   try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
 
-  // Whisper JSON format: { segments: [{ start, end, text, ... }] }
-  return (raw.segments || []).map((s: any) => ({
-    start: s.start,
-    end: s.end,
-    text: (s.text || "").trim(),
-  }));
+  return normalizeSegments(raw.segments || []);
 }
 
 async function transcribeWithOpenAI(audioPath: string): Promise<TranscriptSegment[]> {
@@ -289,12 +292,7 @@ async function transcribeWithOpenAI(audioPath: string): Promise<TranscriptSegmen
 
   const data = await res.json();
 
-  // verbose_json format: { segments: [{ start, end, text, ... }] }
-  return (data.segments || []).map((s: any) => ({
-    start: s.start,
-    end: s.end,
-    text: (s.text || "").trim(),
-  }));
+  return normalizeSegments(data.segments || []);
 }
 
 async function transcribeWithGemini(audioPath: string): Promise<TranscriptSegment[]> {
@@ -332,12 +330,7 @@ async function transcribeWithGemini(audioPath: string): Promise<TranscriptSegmen
   // Gemini may wrap in markdown fences — strip them
   const cleaned = text.replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "").trim();
   try {
-    const segments = JSON.parse(cleaned);
-    return segments.map((s: any) => ({
-      start: Number(s.start) || 0,
-      end: Number(s.end) || 0,
-      text: (s.text || "").trim(),
-    }));
+    return normalizeSegments(JSON.parse(cleaned));
   } catch {
     // Fallback: treat entire response as a single untimed segment
     return [{ start: 0, end: 0, text: text.trim() }];
