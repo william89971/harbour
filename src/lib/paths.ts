@@ -42,7 +42,7 @@ export function runnersFile(): string {
 
 export function maxUploadMb(): number {
   const raw = parseInt(process.env.HARBOUR_MAX_UPLOAD_MB || "", 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : 100;
+  return Number.isFinite(raw) && raw > 0 ? raw : 500;
 }
 
 export function maxUploadBytes(): number {

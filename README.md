@@ -151,7 +151,7 @@ All Harbour state lives under `~/.harbour` by default — DB, uploads, encryptio
 | `HARBOUR_DB_PATH` | SQLite database file path | `<HARBOUR_HOME>/harbour.db` |
 | `HARBOUR_UPLOADS_DIR` | Run attachments directory | `<HARBOUR_HOME>/uploads` |
 | `HARBOUR_ENCRYPTION_KEY` | 64-char hex key for env var encryption | Auto-generated at `<HARBOUR_HOME>/encryption.key` |
-| `HARBOUR_MAX_UPLOAD_MB` | Per-file upload cap in MB | `100` |
+| `HARBOUR_MAX_UPLOAD_MB` | Per-file upload cap in MB | `500` |
 
 ## License
 

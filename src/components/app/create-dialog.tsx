@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { SchedulePicker, parseSchedule, serializeSchedule } from "@/components/app/schedule-picker";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
-import { Pin, FileText, KeyRound, Loader2, Paperclip, Plus, X } from "lucide-react";
+import { AlertCircle, Pin, FileText, KeyRound, Loader2, Paperclip, Plus, X } from "lucide-react";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { uploadFileToRun } from "@/lib/upload-client";
 
@@ -161,8 +161,15 @@ export function CreateDialog({
   // Run-only fields
   const [whenType, setWhenType] = useState<"now" | "later">("now");
   const [scheduledTime, setScheduledTime] = useState("");
-  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const [stagedFiles, setStagedFiles] = useState<{ file: File; error?: string }[]>([]);
+  const stagedFilesRef = useRef<File[]>([]);
   const runFileInputRef = useRef<HTMLInputElement>(null);
+
+  const { data: uploadConfig } = useQuery<{ max_upload_mb: number; max_upload_bytes: number }>({
+    queryKey: ["upload-config"],
+    queryFn: async () => (await fetch("/api/system/upload-config")).json(),
+    staleTime: 60_000,
+  });
 
   // Job-only fields
   const [description, setDescription] = useState("");
@@ -211,6 +218,8 @@ export function CreateDialog({
     setWhenType("now");
     setScheduledTime("");
     setStagedFiles([]);
+    stagedFilesRef.current = [];
+    setSubmitting(false);
     setDescription("");
     setSchedule(parseSchedule(null));
     setCheckCommand("");
@@ -252,13 +261,20 @@ export function CreateDialog({
     const data = await res.json();
 
     // Upload staged files and link to an activity entry
-    if (stagedFiles.length > 0) {
+    const filesToUpload = stagedFilesRef.current;
+    if (filesToUpload.length > 0) {
       const attachmentIds: string[] = [];
-      for (const file of stagedFiles) {
+      const errors: string[] = [];
+      for (const file of filesToUpload) {
         try {
           const att = await uploadFileToRun(data.runId, file).promise;
           attachmentIds.push(att.id);
-        } catch { /* skip failed uploads */ }
+        } catch (err: any) {
+          errors.push(`${file.name}: ${err.message || "upload failed"}`);
+        }
+      }
+      if (errors.length > 0) {
+        alert(`Some files failed to upload:\n${errors.join("\n")}`);
       }
       if (attachmentIds.length > 0) {
         await fetch(`/api/runs/${data.runId}/activity`, {
@@ -422,11 +438,12 @@ export function CreateDialog({
                     <p className="text-xs text-muted-foreground mt-1.5">No files attached.</p>
                   ) : (
                     <div className="flex flex-wrap gap-1.5 mt-2">
-                      {stagedFiles.map((file, i) => (
-                        <span key={i} className="inline-flex items-center gap-1 rounded-md bg-background border px-2 py-1 text-xs font-medium">
-                          <Paperclip className="h-3 w-3 text-muted-foreground" />
-                          <span className="truncate max-w-[150px]">{file.name}</span>
-                          <button type="button" onClick={() => setStagedFiles(prev => prev.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-foreground transition-colors ml-0.5">
+                      {stagedFiles.map((entry, i) => (
+                        <span key={i} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${entry.error ? "bg-destructive/10 border border-destructive/30" : "bg-background border"}`}>
+                          {entry.error ? <AlertCircle className="h-3 w-3 text-destructive" /> : <Paperclip className="h-3 w-3 text-muted-foreground" />}
+                          <span className="truncate max-w-[150px]">{entry.file.name}</span>
+                          {entry.error && <span className="text-destructive text-[10px]">{entry.error}</span>}
+                          <button type="button" onClick={() => setStagedFiles(prev => { const next = prev.filter((_, j) => j !== i); stagedFilesRef.current = next.filter(e => !e.error).map(e => e.file); return next; })} className="text-muted-foreground hover:text-foreground transition-colors ml-0.5">
                             <X className="h-3 w-3" />
                           </button>
                         </span>
@@ -450,7 +467,7 @@ export function CreateDialog({
                   <Button type="button" variant="ghost" onClick={() => handleClose(false)} disabled={submitting}>Cancel</Button>
                   <Button type="submit" disabled={submitting}>
                     {submitting && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-                    {submitting && stagedFiles.length > 0 ? "Uploading..." : "Create Run"}
+                    {submitting && stagedFilesRef.current.length > 0 ? "Uploading..." : "Create Run"}
                   </Button>
                 </DialogFooter>
               </form>
@@ -509,7 +526,17 @@ export function CreateDialog({
         onChange={e => {
           const files = e.target.files ? Array.from(e.target.files) : [];
           if (files.length > 0) {
-            setStagedFiles(prev => [...prev, ...files]);
+            const maxBytes = uploadConfig?.max_upload_bytes;
+            const maxMb = uploadConfig?.max_upload_mb;
+            const entries = files.map(f => ({
+              file: f,
+              error: maxBytes && f.size > maxBytes ? `Exceeds ${maxMb} MB limit` : undefined,
+            }));
+            setStagedFiles(prev => {
+              const next = [...prev, ...entries];
+              stagedFilesRef.current = next.filter(e => !e.error).map(e => e.file);
+              return next;
+            });
           }
           e.target.value = "";
         }}
