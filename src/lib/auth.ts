@@ -86,8 +86,9 @@ export async function getAuthFromCookies(): Promise<{ userId: string; email: str
   return { userId: session.userId, email: session.email, displayName: session.displayName };
 }
 
-/** If caller is an agent, verify it owns the given agentId. Users pass through. */
-export function requireAgentOwnership(auth: AuthContext, agentId: string): NextResponse | null {
+/** If caller is an agent, verify it owns the given agentId. Users pass through. Agentless runs (null agentId) allow any authenticated caller. */
+export function requireAgentOwnership(auth: AuthContext, agentId: string | null): NextResponse | null {
+  if (!agentId) return null;
   if (auth.type === "agent" && auth.agentId !== agentId) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

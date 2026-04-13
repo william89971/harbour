@@ -4,23 +4,23 @@ import { getDecryptedEnvVarsForJob } from "./env-vars";
 import { advanceJobSchedule } from "./jobs";
 import { listAttachmentsByRun, deleteRunAttachmentsDir } from "./attachments";
 
-export function createRun(jobId: string, agentId: string) {
+export function createRun(jobId: string, agentId: string | null) {
   const db = getDb();
   const id = uuid();
   db.prepare(`
     INSERT INTO runs (id, job_id, agent_id, status, claimed_at)
     VALUES (?, ?, ?, 'running', unixepoch())
-  `).run(id, jobId, agentId);
+  `).run(id, jobId, agentId || null);
   return getRunById(id);
 }
 
 export function getRunById(id: string) {
   const db = getDb();
   const run = db.prepare(`
-    SELECT r.*, j.name as job_name, j.one_off, j.agent_id, a.name as agent_name, a.type as agent_type, a.cli as agent_cli
+    SELECT r.*, j.name as job_name, j.one_off, j.workflow_only as job_workflow_only, j.agent_id, a.name as agent_name, a.type as agent_type, a.cli as agent_cli
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN agents a ON r.agent_id = a.id
+    LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.id = ?
   `).get(id) as any;
   return run || null;
@@ -105,7 +105,7 @@ export function listRunsByJob(jobId: string, limit = 50) {
     SELECT r.*, j.name as job_name, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN agents a ON r.agent_id = a.id
+    LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.job_id = ? ORDER BY r.created_at DESC LIMIT ?
   `).all(jobId, limit);
 }
@@ -116,7 +116,7 @@ export function listRunsByAgent(agentId: string, limit = 50) {
     SELECT r.*, j.name as job_name, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN agents a ON r.agent_id = a.id
+    LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.agent_id = ? ORDER BY r.created_at DESC LIMIT ?
   `).all(agentId, limit);
 }
@@ -125,10 +125,10 @@ export function listScheduledRuns(projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN agents a ON r.agent_id = a.id
+    LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.status = 'scheduled' ${projectFilter}
     ORDER BY r.scheduled_for ASC
   `).all(...(projectId ? [projectId] : []));
@@ -138,10 +138,10 @@ export function listRunningRuns(projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN agents a ON r.agent_id = a.id
+    LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.status = 'running' ${projectFilter}
     ORDER BY r.updated_at DESC
   `).all(...(projectId ? [projectId] : []));
@@ -151,10 +151,10 @@ export function listWaitingRuns(projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN agents a ON r.agent_id = a.id
+    LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.status IN ('waiting', 'pending') ${projectFilter}
     ORDER BY r.updated_at ASC
   `).all(...(projectId ? [projectId] : []));
@@ -164,10 +164,10 @@ export function listRecentRuns(limit = 10, projectId?: string) {
   const db = getDb();
   const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
   return db.prepare(`
-    SELECT r.*, j.name as job_name, j.active as job_active, a.name as agent_name
+    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
     FROM runs r
     JOIN jobs j ON r.job_id = j.id
-    JOIN agents a ON r.agent_id = a.id
+    LEFT JOIN agents a ON r.agent_id = a.id
     WHERE r.status IN ('done', 'failed') ${projectFilter}
     ORDER BY r.completed_at DESC LIMIT ?
   `).all(...(projectId ? [projectId, limit] : [limit]));
@@ -323,6 +323,67 @@ export function getAgentNextRun(agentId: string) {
   return buildRunPayload(runId);
 }
 
+// Workflow polling: get next agentless workflow-only run
+export function getNextWorkflowRun() {
+  const db = getDb();
+
+  // Fail stale agentless workflow runs
+  const now = Math.floor(Date.now() / 1000);
+  const stale = db.prepare(`
+    SELECT r.id, j.timeout_minutes FROM runs r
+    JOIN jobs j ON r.job_id = j.id
+    WHERE r.agent_id IS NULL AND r.status = 'running'
+    AND r.updated_at + (j.timeout_minutes * 60) < ?
+  `).all(now) as { id: string; timeout_minutes: number }[];
+  for (const run of stale) {
+    db.prepare(`UPDATE runs SET status = 'failed', completed_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(run.id);
+    db.prepare(`
+      INSERT INTO run_activity (id, run_id, author_type, author_name, content, created_at)
+      VALUES (?, ?, 'system', 'System', ?, unixepoch())
+    `).run(uuid(), run.id, `Run timed out after ${run.timeout_minutes} minutes without completion.`);
+  }
+
+  const assignRun = db.transaction(() => {
+    // Scheduled run ready to start?
+    const scheduledRun = db.prepare(`
+      SELECT id FROM runs
+      WHERE agent_id IS NULL AND status = 'scheduled' AND scheduled_for <= ?
+      ORDER BY scheduled_for ASC LIMIT 1
+    `).get(now) as any;
+
+    if (scheduledRun) {
+      db.prepare(`UPDATE runs SET status = 'running', claimed_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(scheduledRun.id);
+      db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = (SELECT job_id FROM runs WHERE id = ?)`).run(scheduledRun.id);
+      return scheduledRun.id as string;
+    }
+
+    // Any recurring agentless workflow job past its schedule time?
+    const readyJob = db.prepare(`
+      SELECT j.id FROM jobs j
+      WHERE j.agent_id IS NULL AND j.active = 1 AND j.one_off = 0
+      AND j.workflow_only = 1 AND j.workflow_command IS NOT NULL
+      AND j.next_run_at IS NOT NULL AND j.next_run_at <= ?
+      AND NOT EXISTS (
+        SELECT 1 FROM runs WHERE job_id = j.id AND status IN ('scheduled', 'running', 'waiting', 'pending')
+      )
+      ORDER BY j.next_run_at ASC LIMIT 1
+    `).get(now) as any;
+
+    if (readyJob) {
+      const run = createRun(readyJob.id, null);
+      db.prepare(`UPDATE jobs SET last_run_at = unixepoch(), updated_at = unixepoch() WHERE id = ?`).run(readyJob.id);
+      advanceJobSchedule(readyJob.id);
+      return run!.id as string;
+    }
+
+    return null;
+  });
+
+  const runId = assignRun();
+  if (!runId) return null;
+  return buildRunPayload(runId);
+}
+
 export function peekAgentNext(agentId: string) {
   const db = getDb();
 
@@ -425,7 +486,8 @@ function buildRunPayload(runId: string) {
       id: job.id,
       name: job.name,
       instructions,
-      check: job.check_command,
+      workflow: job.workflow_command,
+      workflow_only: !!job.workflow_only,
       model: job.model || null,
       thinking: job.thinking || null,
       timeout_minutes: job.timeout_minutes ?? 30,

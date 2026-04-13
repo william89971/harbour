@@ -22,18 +22,20 @@ Next.js (App Router), SQLite (better-sqlite3), Tailwind / shadcn/ui, TypeScript.
 - `src/lib/schedule.ts` — schedule parsing and timezone-aware next-run-time calculation
 - `src/lib/cli-config.ts` — shared CLI tool config (models, thinking options per tool)
 - `src/lib/runners.ts` — harbour agent runner config (read/write ~/.harbour/runners.json)
-- `src/components/app/create-dialog.tsx` — unified New Run / New Job dialog (shared component)
+- `src/components/app/create-dialog.tsx` — unified New Run / New Job dialog (shared component, dynamic type toggle for agent/workflow)
 - `src/components/app/trigger-dialog.tsx` — shared trigger confirmation modal with optional extra instructions
 - `src/components/app/model-thinking-select.tsx` — shared Model/Thinking select for CLI agents
-- `bin/` — CLI entry point and agent runner (harbour agents, providers, launchd install)
+- `bin/` — CLI entry point and agent runner (harbour agents, workflow execution, providers, launchd install)
+- `src/app/api/workflows/next/` — runner endpoint for discovering agentless workflow-only runs
 - `GUIDE.md` — agent-facing API contract, served at `/api/guide`
 
 ## Conventions
 
 - Jobs are static configuration (what to do, when, which docs/databases/env vars). Runs are the dynamic unit of work.
+- Jobs are either agent jobs (belong to an agent), workflow-only jobs (no agent, shell command only), or combined (workflow gates the agent). Workflow-only jobs have nullable `agent_id`.
 - Docs and env vars are top-level, linked to jobs. Injected into runs automatically via `/next`.
 - Pinned docs and env vars are auto-attached to all new jobs and one-off runs.
-- Agents poll for work via `/api/agents/:id/next`. Harbour never calls out to agents.
+- Agents poll for work via `/api/agents/:id/next`. Agentless workflow jobs are discovered via `/api/workflows/next`. Harbour never calls out to agents.
 - Run statuses: `scheduled` → `running` → `waiting` (needs human) → `pending` (human responded, awaiting agent pickup) → `done`/`failed`/`skipped`.
 - Failed/skipped runs can be retried (go back to `pending`).
 - The database is a single SQLite file (default `./harbour.db`).

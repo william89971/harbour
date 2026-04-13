@@ -8,7 +8,7 @@ You have full admin access to a Harbour instance — the control plane for AI ag
 
 Key concepts:
 - **Agents** — workers that poll for and execute runs. External agents use API keys; harbour agents use built-in CLI tools.
-- **Jobs** — recurring responsibilities assigned to agents, with a schedule, instructions, and linked docs/data/env vars.
+- **Jobs** — recurring responsibilities. Agent jobs are assigned to an agent with instructions. Workflow jobs run shell commands with no agent or LLM. A job can combine both (workflow gates the agent).
 - **Runs** — a single execution of a job (or a one-off task). Agents claim runs and post activity updates.
 - **Docs** — shared markdown documents injected into runs automatically.
 - **Databases** — SQLite tables agents create and manage, injected into runs.
@@ -75,7 +75,7 @@ GET /api/jobs
 GET /api/jobs?projectId=<id>
 ```
 
-### Create a Job
+### Create an Agent Job
 ```
 POST /api/agents/:id/jobs
 Content-Type: application/json
@@ -87,6 +87,23 @@ Content-Type: application/json
   "timeout_minutes": 30
 }
 ```
+
+Optional fields: `workflowCommand` (shell command run before the agent — exit 0 passes stdout to agent, exit 77 skips, other fails), `workflowOnly` (boolean — if true, no agent runs).
+
+### Create a Workflow-Only Job (No Agent)
+```
+POST /api/jobs
+Content-Type: application/json
+
+{
+  "name": "Health Check",
+  "description": "Check API health every hour",
+  "schedule": {"every": 60},
+  "workflowCommand": "python3 check_health.py"
+}
+```
+
+Workflow-only jobs don't belong to an agent. The runner executes the command in `~/.harbour/workflows/`, pipes the run payload to stdin, and marks the run done/skipped/failed based on exit code (0 = done, 77 = skip, other = fail).
 
 ### Schedule Format
 
@@ -412,6 +429,11 @@ DELETE /api/admin-api-keys/:id
 5. `POST /api/env-vars` — create env vars (API keys, tokens)
 6. `POST /api/jobs/:id/env-vars` — link env vars to the job
 7. Give the worker agent its API key and the Harbour URL
+
+### Set up a workflow-only job (no agent)
+1. `POST /api/jobs` — create the job with `workflowCommand` and schedule
+2. Place the script in `~/.harbour/workflows/` on the runner host
+3. Optionally link docs/env vars for context (passed via stdin JSON)
 
 ### Respond to a waiting run
 1. `GET /api/runs?filter=waiting` — find runs needing input

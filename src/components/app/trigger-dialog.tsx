@@ -12,9 +12,10 @@ interface TriggerDialogProps {
   jobName: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  workflowOnly?: boolean;
 }
 
-export function TriggerDialog({ jobId, jobName, open, onOpenChange }: TriggerDialogProps) {
+export function TriggerDialog({ jobId, jobName, open, onOpenChange, workflowOnly }: TriggerDialogProps) {
   const queryClient = useQueryClient();
   const [instructions, setInstructions] = useState("");
   const [triggering, setTriggering] = useState(false);
@@ -53,11 +54,11 @@ export function TriggerDialog({ jobId, jobName, open, onOpenChange }: TriggerDia
           This will create a new scheduled run for this job immediately.
         </p>
         <div className="space-y-2">
-          <Label>Additional instructions (optional)</Label>
+          <Label>{workflowOnly ? "Note (optional)" : "Additional instructions (optional)"}</Label>
           <Textarea
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
-            placeholder="Add context for this specific run..."
+            placeholder={workflowOnly ? "Add a note for why this was triggered..." : "Add context for this specific run..."}
             rows={3}
           />
         </div>

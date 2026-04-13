@@ -103,9 +103,11 @@ export default function AgentsPage() {
     const body: Record<string, string> = { name, description };
     if (agentType === "harbour") {
       body.type = "harbour";
-      body.cli = selectedCli!;
-      body.model = selectedModel;
-      if (selectedThinking) body.thinking = selectedThinking;
+      if (selectedCli && selectedCli !== "none") {
+        body.cli = selectedCli;
+        body.model = selectedModel;
+        if (selectedThinking) body.thinking = selectedThinking;
+      }
     }
 
     const res = await fetch("/api/agents", {
@@ -330,6 +332,15 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                       )}
                     </button>
                   ))}
+                  <button
+                    onClick={() => setSelectedCli("none")}
+                    className="flex items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:border-primary hover:bg-muted/50 cursor-pointer"
+                  >
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">None (Workflow Only)</p>
+                      <p className="text-xs text-muted-foreground">Jobs use workflow commands, no LLM</p>
+                    </div>
+                  </button>
                 </div>
               )}
               <DialogFooter>
@@ -347,7 +358,7 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                 <Label htmlFor="agent-desc">Description</Label>
                 <Textarea id="agent-desc" value={description} onChange={e => setDescription(e.target.value)} placeholder="What does this agent do?" rows={2} />
               </div>
-              {agentType === "harbour" && selectedCli && CLI_CONFIG[selectedCli] && (
+              {agentType === "harbour" && selectedCli && selectedCli !== "none" && CLI_CONFIG[selectedCli] && (
                 <ModelThinkingSelect
                   cli={selectedCli}
                   model={selectedModel}

@@ -36,9 +36,9 @@ type Activity = {
 };
 
 type Run = {
-  id: string; job_id: string; agent_id: string; status: string;
-  job_name: string; agent_name: string; agent_type: string; agent_cli: string | null;
-  session_id: string | null; session_cwd: string | null; one_off: number;
+  id: string; job_id: string; agent_id: string | null; status: string;
+  job_name: string; agent_name: string | null; agent_type: string | null; agent_cli: string | null;
+  session_id: string | null; session_cwd: string | null; one_off: number; job_workflow_only: number;
   created_at: number; updated_at: number; completed_at: number | null;
   kill_requested_at: number | null;
   activity: Activity[];
@@ -583,8 +583,17 @@ export default function RunDetailPage() {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-3 gap-x-4 rounded-lg border p-3">
         <div className="flex items-center gap-2 text-sm">
-          <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <Link href={`/agents/${run.agent_id}`} className="text-muted-foreground hover:text-foreground transition-colors truncate">{run.agent_name}</Link>
+          {run.agent_id && run.agent_name ? (
+            <>
+              <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <Link href={`/agents/${run.agent_id}`} className="text-muted-foreground hover:text-foreground transition-colors truncate">{run.agent_name}</Link>
+            </>
+          ) : (
+            <>
+              <Terminal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="text-muted-foreground truncate">Workflow</span>
+            </>
+          )}
         </div>
         <div className="flex items-center gap-2 text-sm">
           <Play className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -673,8 +682,8 @@ export default function RunDetailPage() {
         </form>
       )}
 
-      {/* Live Output (harbour agents only) */}
-      {run.agent_type === "harbour" && (
+      {/* Live Output (harbour agents only, not workflow-only runs) */}
+      {run.agent_type === "harbour" && !run.job_workflow_only && (
         <LiveOutput
           runId={run.id}
           status={run.status}

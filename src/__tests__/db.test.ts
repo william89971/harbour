@@ -219,11 +219,23 @@ describe("Job Management", () => {
       description: "Does everything",
       instructions: "Step 1: do the thing",
       schedule: '{"days":[1,2,3],"time":"09:00"}',
-      checkCommand: "python3 check.py",
+      workflowCommand: "python3 check.py",
     });
     expect(job!.description).toBe("Does everything");
     expect(job!.instructions).toBe("Step 1: do the thing");
-    expect(job!.check_command).toBe("python3 check.py");
+    expect(job!.workflow_command).toBe("python3 check.py");
+    expect(job!.workflow_only).toBe(0);
+  });
+
+  it("should create a workflow-only job", () => {
+    const job = createJob(agentId, {
+      name: "Workflow Job",
+      schedule: '{"every":60}',
+      workflowCommand: "bash health_check.sh",
+      workflowOnly: true,
+    });
+    expect(job!.workflow_command).toBe("bash health_check.sh");
+    expect(job!.workflow_only).toBe(1);
   });
 
   it("should list jobs by agent with run counts", () => {

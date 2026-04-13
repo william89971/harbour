@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { SchedulePicker, parseSchedule, serializeSchedule } from "@/components/app/schedule-picker";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
-import { AlertCircle, Pin, FileText, KeyRound, Loader2, Paperclip, Plus, X } from "lucide-react";
+import { AlertCircle, Bot, Pin, FileText, KeyRound, Loader2, Paperclip, Plus, Terminal, X } from "lucide-react";
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { uploadFileToRun } from "@/lib/upload-client";
 
@@ -174,7 +174,9 @@ export function CreateDialog({
   // Job-only fields
   const [description, setDescription] = useState("");
   const [schedule, setSchedule] = useState(parseSchedule(null));
-  const [checkCommand, setCheckCommand] = useState("");
+  const [workflowCommand, setWorkflowCommand] = useState("");
+  const [agentEnabled, setAgentEnabled] = useState(true);
+  const [workflowEnabled, setWorkflowEnabled] = useState(false);
 
   useEffect(() => {
     if (open) setTab(defaultTab);
@@ -222,7 +224,9 @@ export function CreateDialog({
     setSubmitting(false);
     setDescription("");
     setSchedule(parseSchedule(null));
-    setCheckCommand("");
+    setWorkflowCommand("");
+    setAgentEnabled(true);
+    setWorkflowEnabled(false);
     setLoaded(false);
   }
 
@@ -301,19 +305,22 @@ export function CreateDialog({
 
   async function handleCreateJob(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !agentId) return;
+    const isWorkflowOnly = workflowEnabled && !agentEnabled;
+    if (!name.trim() || (!isWorkflowOnly && !agentId)) return;
 
-    const res = await fetch(`/api/agents/${agentId}/jobs`, {
+    const url = isWorkflowOnly ? "/api/jobs" : `/api/agents/${agentId}/jobs`;
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name,
         description: description || undefined,
-        instructions: instructions || undefined,
+        instructions: agentEnabled ? (instructions || undefined) : undefined,
         schedule: serializeSchedule(schedule),
-        checkCommand: checkCommand || undefined,
-        model: model || undefined,
-        thinking: thinking || undefined,
+        workflowCommand: workflowEnabled && workflowCommand ? workflowCommand : undefined,
+        workflowOnly: isWorkflowOnly ? true : undefined,
+        model: agentEnabled ? (model || undefined) : undefined,
+        thinking: agentEnabled ? (thinking || undefined) : undefined,
         docIds: selectedDocIds.length > 0 ? selectedDocIds : undefined,
         envVarIds: selectedEnvVarIds.length > 0 ? selectedEnvVarIds : undefined,
       }),
@@ -340,9 +347,13 @@ export function CreateDialog({
     setAgentId(id);
     setModel("");
     setThinking("");
+    setAgentEnabled(true);
+    setWorkflowEnabled(false);
+    setWorkflowCommand("");
   }
 
   const selectedAgent = agents.find(a => a.id === agentId);
+  const isHarbourAgent = selectedAgent?.type === "harbour";
 
   // Shared form fields rendered in both tabs
   const sharedFields = (
@@ -476,7 +487,7 @@ export function CreateDialog({
             {/* --- Job tab --- */}
             <TabsContent value="job">
               <form onSubmit={handleCreateJob} className="space-y-4 pt-2">
-                {sharedFields}
+                {agentEnabled && sharedFields}
 
                 <div className="space-y-2">
                   <Label>Name</Label>
@@ -488,24 +499,40 @@ export function CreateDialog({
                   <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Brief description" />
                 </div>
 
-                <div className="space-y-2">
-                  <Label>Instructions</Label>
-                  <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="What should the agent do?" rows={3} className="max-h-[25vh]" />
-                </div>
+                {(isHarbourAgent || !agentEnabled) && (
+                  <div className="space-y-2">
+                    <Label>Type</Label>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => { if (!agentEnabled || workflowEnabled) setAgentEnabled(!agentEnabled); }} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${agentEnabled ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}><Bot className="h-3.5 w-3.5" />Agent</button>
+                      <button type="button" onClick={() => { if (!workflowEnabled || agentEnabled) setWorkflowEnabled(!workflowEnabled); }} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${workflowEnabled ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}><Terminal className="h-3.5 w-3.5" />Workflow</button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <Label>Schedule</Label>
                   <SchedulePicker schedule={schedule} onChange={setSchedule} />
                 </div>
 
-                {modelThinkingFields}
-                {docsEnvVarsFields}
+                {workflowEnabled && (
+                  <div className="space-y-2">
+                    <Label>Workflow Command</Label>
+                    <Input value={workflowCommand} onChange={e => setWorkflowCommand(e.target.value)} placeholder="e.g. python3 check_prs.py" className="font-mono text-xs" required />
+                    <p className="text-xs text-muted-foreground">Exit 0 = success, 77 = skip, other = fail.</p>
+                  </div>
+                )}
 
-                <div className="space-y-2">
-                  <Label>Pre-run Check (optional)</Label>
-                  <Input value={checkCommand} onChange={e => setCheckCommand(e.target.value)} placeholder="e.g. python3 checks/new_videos.py" className="font-mono text-xs" />
-                  <p className="text-xs text-muted-foreground">Shell command run before the LLM. Exit 0 = proceed, non-zero = skip.</p>
-                </div>
+                {agentEnabled && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>Instructions</Label>
+                      <Textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="What should the agent do?" rows={3} className="max-h-[25vh]" />
+                    </div>
+                    {modelThinkingFields}
+                  </>
+                )}
+
+                {docsEnvVarsFields}
 
                 <DialogFooter>
                   <Button type="button" variant="ghost" onClick={() => handleClose(false)}>Cancel</Button>

@@ -25,7 +25,7 @@ import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 
 type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; last_polled_at: number | null; created_at: number };
-type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; check_command: string | null };
+type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; workflow_command: string | null; workflow_only: number };
 type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
 export default function AgentDetailPage() {

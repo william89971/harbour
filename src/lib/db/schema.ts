@@ -89,7 +89,8 @@ export function initializeSchema(db: Database.Database) {
       description TEXT,
       instructions TEXT,
       schedule TEXT NOT NULL,
-      check_command TEXT,
+      workflow_command TEXT,
+      workflow_only INTEGER NOT NULL DEFAULT 0,
 
       timeout_minutes INTEGER NOT NULL DEFAULT 30,
       one_off INTEGER NOT NULL DEFAULT 0,
@@ -469,6 +470,76 @@ export function initializeSchema(db: Database.Database) {
   }
   if (!runCols.some((c: any) => c.name === "session_cwd")) {
     db.exec(`ALTER TABLE runs ADD COLUMN session_cwd TEXT`);
+  }
+
+  // Migrations: rename check_command → workflow_command, add workflow_only
+  const jobCols3 = db.prepare(`PRAGMA table_info(jobs)`).all() as any[];
+  if (jobCols3.some((c: any) => c.name === "check_command")) {
+    db.exec(`ALTER TABLE jobs RENAME COLUMN check_command TO workflow_command`);
+  }
+  if (!jobCols3.some((c: any) => c.name === "workflow_only")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN workflow_only INTEGER NOT NULL DEFAULT 0`);
+  }
+
+  // Migration: make agent_id nullable on jobs (for workflow-only jobs without an agent)
+  const jobAgentCol = (db.prepare(`PRAGMA table_info(jobs)`).all() as any[])
+    .find((c: any) => c.name === "agent_id");
+  if (jobAgentCol?.notnull === 1) {
+    db.exec(`
+      CREATE TABLE jobs_new (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT,
+        instructions TEXT,
+        schedule TEXT NOT NULL,
+        workflow_command TEXT,
+        active INTEGER NOT NULL DEFAULT 1,
+        last_run_at INTEGER,
+        next_run_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        one_off INTEGER NOT NULL DEFAULT 0,
+        timeout_minutes INTEGER NOT NULL DEFAULT 30,
+        model TEXT,
+        thinking TEXT,
+        workflow_only INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO jobs_new SELECT * FROM jobs;
+      DROP TABLE jobs;
+      ALTER TABLE jobs_new RENAME TO jobs;
+      CREATE INDEX IF NOT EXISTS idx_jobs_agent ON jobs(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
+    `);
+  }
+
+  // Migration: make agent_id nullable on runs (for agentless workflow runs)
+  const runAgentCol = (db.prepare(`PRAGMA table_info(runs)`).all() as any[])
+    .find((c: any) => c.name === "agent_id");
+  if (runAgentCol?.notnull === 1) {
+    db.exec(`
+      CREATE TABLE runs_new (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('scheduled','running','waiting','pending','done','failed','skipped','killed')),
+        scheduled_for INTEGER,
+        claimed_at INTEGER,
+        completed_at INTEGER,
+        kill_requested_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        extra_instructions TEXT,
+        session_id TEXT,
+        session_cwd TEXT
+      );
+      INSERT INTO runs_new SELECT * FROM runs;
+      DROP TABLE runs;
+      ALTER TABLE runs_new RENAME TO runs;
+      CREATE INDEX IF NOT EXISTS idx_runs_job ON runs(job_id);
+      CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+    `);
   }
 
   // Ensure encryption key exists (generates on first run)

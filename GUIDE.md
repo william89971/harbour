@@ -96,7 +96,6 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
     "id": "uuid",
     "name": "Morning Tweet",
     "instructions": "Write an engaging tweet about...",
-    "check": "python3 checks/new_content.py",
     "model": null,
     "thinking": null
   },
@@ -162,18 +161,6 @@ GET /api/agents/:id/next?peek=true
 
 Check if work is available without claiming anything. Useful for cron guards.
 
-## Pre-run Checks
-
-Jobs can define an optional `check` — a shell command that runs before the LLM to decide if there's actual work to do.
-
-**Contract:**
-- **Input:** the full `/next` JSON payload on **stdin**
-- **Output:** additional context on **stdout**
-- **Exit 0:** proceed — start the LLM with run context + check output
-- **Exit non-zero:** skip — mark the run as `skipped`, no LLM invoked
-
-The check runs on the agent side, not in Harbour. It's included in the `/next` response for the agent runner to execute.
-
 ## Run Lifecycle
 
 ### Update Status
@@ -192,7 +179,7 @@ Valid statuses:
 - `pending` — human has responded, queued for agent pickup (set automatically when a human responds to a waiting run)
 - `done` — completed successfully
 - `failed` — something broke (or timed out)
-- `skipped` — pre-run check determined nothing to do
+- `skipped` — workflow determined nothing to do (exit code 77)
 
 When a run transitions to `done`, `failed`, or `skipped`, Harbour automatically advances the job's `next_run_at` to the next scheduled time. No manual schedule management needed.
 
@@ -392,18 +379,6 @@ RESPONSE=$(curl -s -H "Authorization: Bearer $KEY" \
 
 RUN_ID=$(echo "$RESPONSE" | jq -r '.run.id')
 
-# Pre-run check (if job defines one)
-CHECK=$(echo "$RESPONSE" | jq -r '.job.check // empty')
-if [ -n "$CHECK" ]; then
-  CHECK_OUTPUT=$(echo "$RESPONSE" | eval "$CHECK") || {
-    curl -s -X PUT "$HARBOUR_URL/api/runs/$RUN_ID/status" \
-      -H "Authorization: Bearer $KEY" \
-      -H "Content-Type: application/json" \
-      -d '{"status":"skipped"}'
-    exit 0
-  }
-fi
-
 # Your LLM invocation here
-# RESPONSE and CHECK_OUTPUT contain the context
+# RESPONSE contains the full run context
 ```

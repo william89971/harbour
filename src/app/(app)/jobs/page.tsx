@@ -15,10 +15,10 @@ import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 import { Link2 } from "lucide-react";
 
 type Job = {
-  id: string; agent_id: string; agent_name: string; name: string;
+  id: string; agent_id: string | null; agent_name: string | null; name: string;
   description: string | null; schedule: string;
   active: number; total_runs: number; skipped_runs: number; waiting_runs: number; pending_runs: number;
-  last_run_at: number | null; check_command: string | null;
+  last_run_at: number | null; workflow_command: string | null; workflow_only: number;
 };
 
 export default function JobsPage() {
@@ -36,6 +36,49 @@ export default function JobsPage() {
     },
     refetchInterval: 5000,
   });
+
+  function renderJobSection(title: string, sectionJobs: Job[]) {
+    if (sectionJobs.length === 0) return null;
+    return (
+      <div className="space-y-2">
+        <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
+        <div className="grid gap-2">
+          {sectionJobs.map(job => (
+            <Link key={job.id} href={`/jobs/${job.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
+              <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                !job.active ? "bg-muted" : job.waiting_runs > 0 ? "bg-amber-500/10" : job.pending_runs > 0 ? "bg-blue-500/10" : "bg-primary/10"
+              }`}>
+                <Briefcase className={`h-4 w-4 ${
+                  !job.active ? "text-muted-foreground" : job.waiting_runs > 0 ? "text-amber-500" : job.pending_runs > 0 ? "text-blue-500" : "text-primary"
+                }`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-medium">{job.name}</span>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 mt-1 text-xs text-muted-foreground">
+                  {job.agent_name && (
+                    <span className="flex items-center gap-1"><Bot className="h-3 w-3" /> {job.agent_name}</span>
+                  )}
+                  <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatSchedule(parseSchedule(job.schedule))}</span>
+                  {job.workflow_command && !job.workflow_only && (
+                    <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">workflow + agent</span>
+                  )}
+                  {(job.total_runs > 0 || job.skipped_runs > 0) && <span className="hidden sm:inline">{job.total_runs} runs{job.skipped_runs > 0 ? ` · ${job.skipped_runs} skipped` : ""}</span>}
+                  {job.last_run_at && <span className="hidden sm:inline">Last run {timeAgo(job.last_run_at)}</span>}
+                </div>
+              </div>
+              {(!job.active || job.waiting_runs > 0 || job.pending_runs > 0) && (
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  {!job.active && <Badge variant="secondary" className="text-[10px]">Paused</Badge>}
+                  {job.waiting_runs > 0 && <Badge className="text-[10px] bg-amber-500/10 text-amber-600 hover:bg-amber-500/10">{job.waiting_runs} waiting</Badge>}
+                  {job.pending_runs > 0 && <Badge className="text-[10px] bg-blue-500/10 text-blue-600 hover:bg-blue-500/10">{job.pending_runs} pending</Badge>}
+                </div>
+              )}
+            </Link>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (loading) return <div className="text-sm text-muted-foreground py-12 text-center">Loading...</div>;
 
@@ -63,35 +106,10 @@ export default function JobsPage() {
           No jobs yet. Create one to get started.
         </EmptyState>
       ) : (
-        <div className="grid gap-2">
-          {jobs.map(job => (
-            <Link key={job.id} href={`/jobs/${job.id}`} className="flex items-start gap-3 rounded-lg border p-3 hover:bg-accent/50 transition-colors">
-              <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                !job.active ? "bg-muted" : job.waiting_runs > 0 ? "bg-amber-500/10" : job.pending_runs > 0 ? "bg-blue-500/10" : "bg-primary/10"
-              }`}>
-                <Briefcase className={`h-4 w-4 ${
-                  !job.active ? "text-muted-foreground" : job.waiting_runs > 0 ? "text-amber-500" : job.pending_runs > 0 ? "text-blue-500" : "text-primary"
-                }`} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <span className="text-sm font-medium">{job.name}</span>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-3 mt-1 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1"><Bot className="h-3 w-3" /> {job.agent_name}</span>
-                  <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatSchedule(parseSchedule(job.schedule))}</span>
-                  {(job.total_runs > 0 || job.skipped_runs > 0) && <span className="hidden sm:inline">{job.total_runs} runs{job.skipped_runs > 0 ? ` · ${job.skipped_runs} skipped` : ""}</span>}
-                  {job.last_run_at && <span className="hidden sm:inline">Last run {timeAgo(job.last_run_at)}</span>}
-                </div>
-              </div>
-              {(!job.active || job.waiting_runs > 0 || job.pending_runs > 0) && (
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  {!job.active && <Badge variant="secondary" className="text-[10px]">Paused</Badge>}
-                  {job.waiting_runs > 0 && <Badge className="text-[10px] bg-amber-500/10 text-amber-600 hover:bg-amber-500/10">{job.waiting_runs} waiting</Badge>}
-                  {job.pending_runs > 0 && <Badge className="text-[10px] bg-blue-500/10 text-blue-600 hover:bg-blue-500/10">{job.pending_runs} pending</Badge>}
-                </div>
-              )}
-            </Link>
-          ))}
-        </div>
+        <>
+          {renderJobSection("Agent Jobs", jobs.filter(j => !j.workflow_only))}
+          {renderJobSection("Workflow Jobs", jobs.filter(j => !!j.workflow_only))}
+        </>
       )}
 
       <CreateDialog open={showCreate} onOpenChange={setShowCreate} defaultTab="job" />

@@ -6,12 +6,13 @@ import { listPinnedEnvVarIds } from "./env-vars";
 import { getTimezone } from "./settings";
 import { deleteRunAttachmentsDir } from "./attachments";
 
-export function createJob(agentId: string, data: {
+export function createJob(agentId: string | null, data: {
   name: string;
   description?: string;
   instructions?: string;
   schedule: string;
-  checkCommand?: string;
+  workflowCommand?: string;
+  workflowOnly?: boolean;
   model?: string;
   thinking?: string;
   docIds?: string[];
@@ -24,12 +25,13 @@ export function createJob(agentId: string, data: {
 
   const create = db.transaction(() => {
     db.prepare(`
-      INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, check_command, model, thinking, active, next_run_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (id, agent_id, name, description, instructions, schedule, workflow_command, workflow_only, model, thinking, active, next_run_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, agentId, data.name, data.description || null,
       data.instructions || null, data.schedule,
-      data.checkCommand || null, data.model || null, data.thinking || null,
+      data.workflowCommand || null, data.workflowOnly ? 1 : 0,
+      data.model || null, data.thinking || null,
       data.active !== false ? 1 : 0, nextRunAt
     );
 
@@ -55,7 +57,7 @@ export function getJobById(id: string) {
   const job = db.prepare(`
     SELECT j.*, a.name as agent_name
     FROM jobs j
-    JOIN agents a ON j.agent_id = a.id
+    LEFT JOIN agents a ON j.agent_id = a.id
     WHERE j.id = ?
   `).get(id) as any;
   if (!job) return null;
@@ -103,7 +105,7 @@ export function listAllJobs(projectId?: string) {
         (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'waiting') as waiting_runs,
         (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs
       FROM jobs j
-      JOIN agents a ON j.agent_id = a.id
+      LEFT JOIN agents a ON j.agent_id = a.id
       WHERE j.one_off = 0
       AND j.id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)
       ORDER BY j.name
@@ -116,7 +118,7 @@ export function listAllJobs(projectId?: string) {
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'waiting') as waiting_runs,
       (SELECT COUNT(*) FROM runs WHERE job_id = j.id AND status = 'pending') as pending_runs
     FROM jobs j
-    JOIN agents a ON j.agent_id = a.id
+    LEFT JOIN agents a ON j.agent_id = a.id
     WHERE j.one_off = 0
     ORDER BY j.name
   `).all();
@@ -127,7 +129,8 @@ export function updateJob(id: string, data: {
   description?: string;
   instructions?: string;
   schedule?: string;
-  checkCommand?: string;
+  workflowCommand?: string;
+  workflowOnly?: boolean;
   model?: string;
   thinking?: string;
   timeoutMinutes?: number;
@@ -142,7 +145,8 @@ export function updateJob(id: string, data: {
   if (data.description !== undefined) { fields.push("description = ?"); values.push(data.description); }
   if (data.instructions !== undefined) { fields.push("instructions = ?"); values.push(data.instructions); }
   if (data.schedule !== undefined) { fields.push("schedule = ?"); values.push(data.schedule); }
-  if (data.checkCommand !== undefined) { fields.push("check_command = ?"); values.push(data.checkCommand); }
+  if (data.workflowCommand !== undefined) { fields.push("workflow_command = ?"); values.push(data.workflowCommand); }
+  if (data.workflowOnly !== undefined) { fields.push("workflow_only = ?"); values.push(data.workflowOnly ? 1 : 0); }
   if (data.model !== undefined) { fields.push("model = ?"); values.push(data.model || null); }
   if (data.thinking !== undefined) { fields.push("thinking = ?"); values.push(data.thinking || null); }
   if (data.timeoutMinutes !== undefined) { fields.push("timeout_minutes = ?"); values.push(data.timeoutMinutes); }
@@ -232,7 +236,7 @@ export function triggerJobRun(jobId: string, extraInstructions?: string) {
   db.prepare(`
     INSERT INTO runs (id, job_id, agent_id, status, scheduled_for, extra_instructions, created_at, updated_at)
     VALUES (?, ?, ?, 'scheduled', ?, ?, ?, ?)
-  `).run(runId, jobId, job.agent_id, now, extraInstructions || null, now, now);
+  `).run(runId, jobId, job.agent_id || null, now, extraInstructions || null, now, now);
 
   if (extraInstructions) {
     db.prepare(`

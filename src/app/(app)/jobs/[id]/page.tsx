@@ -26,8 +26,8 @@ import { StatusDot } from "@/components/app/run-status";
 
 type Job = {
   id: string; agent_id: string; agent_name: string; name: string; description: string | null;
-  instructions: string | null; schedule: string; check_command: string | null; timeout_minutes: number;
-  model: string | null; thinking: string | null;
+  instructions: string | null; schedule: string; workflow_command: string | null; workflow_only: number;
+  timeout_minutes: number; model: string | null; thinking: string | null;
   active: number; last_run_at: number | null; next_run_at: number | null;
   docs: { id: string; title: string }[];
   databases: { id: string; name: string; table_name: string }[];
@@ -138,7 +138,8 @@ export default function JobDetailPage() {
   const [editDesc, setEditDesc] = useState("");
   const [editInstructions, setEditInstructions] = useState("");
   const [editSchedule, setEditSchedule] = useState(parseSchedule(null));
-  const [editCheck, setEditCheck] = useState("");
+  const [editWorkflowCommand, setEditWorkflowCommand] = useState("");
+  const [editWorkflowOnly, setEditWorkflowOnly] = useState(false);
   const [editTimeout, setEditTimeout] = useState(30);
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
@@ -153,7 +154,8 @@ export default function JobDetailPage() {
         description: editDesc,
         instructions: editInstructions,
         schedule: serializeSchedule(editSchedule),
-        checkCommand: editCheck || undefined,
+        workflowCommand: editWorkflowCommand || undefined,
+        workflowOnly: editWorkflowCommand ? editWorkflowOnly : false,
         timeoutMinutes: editTimeout,
         model: editModel || "",
         thinking: editThinking || "",
@@ -238,7 +240,7 @@ export default function JobDetailPage() {
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleToggleActive} title={job.active ? "Pause" : "Resume"}>
             {job.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditCheck(job.check_command || ""); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); } setShowEdit(true); }} title="Edit">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditWorkflowCommand(job.workflow_command || ""); setEditWorkflowOnly(!!job.workflow_only); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); } setShowEdit(true); }} title="Edit">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -271,10 +273,17 @@ export default function JobDetailPage() {
 
       {job.instructions && <InstructionsBlock text={job.instructions} />}
 
-      {job.check_command && (
+      {job.workflow_command && (
         <div className="space-y-1">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider">Pre-run Check</p>
-          <code className="block rounded-lg bg-muted px-3 py-2 text-xs font-mono">{job.check_command}</code>
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Workflow</p>
+            {job.workflow_only ? (
+              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">Workflow Only</span>
+            ) : (
+              <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">Workflow + Agent</span>
+            )}
+          </div>
+          <code className="block rounded-lg bg-muted px-3 py-2 text-xs font-mono">{job.workflow_command}</code>
         </div>
       )}
 
@@ -461,8 +470,15 @@ export default function JobDetailPage() {
               <SchedulePicker schedule={editSchedule} onChange={setEditSchedule} />
             </div>
             <div className="space-y-2">
-              <Label>Pre-run Check</Label>
-              <Input value={editCheck} onChange={e => setEditCheck(e.target.value)} className="font-mono text-xs" />
+              <Label>Workflow Command</Label>
+              <Input value={editWorkflowCommand} onChange={e => setEditWorkflowCommand(e.target.value)} placeholder="e.g. python3 check_prs.py" className="font-mono text-xs" />
+              <p className="text-xs text-muted-foreground">Exit 0 = success, 77 = skip, other = fail.</p>
+              {editWorkflowCommand && (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={editWorkflowOnly} onChange={e => setEditWorkflowOnly(e.target.checked)} className="rounded" />
+                  <span className="text-xs text-muted-foreground">Workflow only — no LLM</span>
+                </label>
+              )}
             </div>
             <div className="space-y-2">
               <Label>Timeout (minutes)</Label>
@@ -489,7 +505,7 @@ export default function JobDetailPage() {
       </Dialog>
 
       {/* Trigger Dialog */}
-      <TriggerDialog jobId={id} jobName={job.name} open={showTrigger} onOpenChange={setShowTrigger} />
+      <TriggerDialog jobId={id} jobName={job.name} open={showTrigger} onOpenChange={setShowTrigger} workflowOnly={!!job.workflow_only} />
     </div>
   );
 }

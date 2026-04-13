@@ -1,6 +1,9 @@
 import { loadRunnerConfigs, loadSessions, saveSessions } from "./config.mjs";
 import { getProvider, ensureWorkingDir, runCliTool } from "./providers.mjs";
 import { spawn } from "child_process";
+import { mkdirSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 
 async function apiCall(url, apiKey, method = "GET", body = null) {
   const opts = {
@@ -186,8 +189,8 @@ function buildPrompt(payload, apiKey, isResume) {
     prompt += "\n";
   }
 
-  // Check output is appended by the runner after executing the check command
-  // (see runSingleAgent — check commands are run as shell processes, not by the LLM)
+  // Workflow output is appended by the runner after executing the workflow command
+  // (see runSingleAgent — workflows are run as shell processes, not by the LLM)
 
   prompt += apiPrompt;
 
@@ -195,16 +198,21 @@ function buildPrompt(payload, apiKey, isResume) {
 }
 
 /**
- * Run a pre-run check command. Pipes the full payload JSON to stdin.
- * Exit 0 = work found (proceed), exit 1 = no work (skip silently), exit 2+ = error.
+ * Run a workflow command. Pipes the full payload JSON to stdin.
+ * Exit 0 = success, exit 77 = skip (no work), any other non-zero = error.
  * Returns { code, stdout, stderr }.
+ *
+ * @param {object} opts
+ * @param {number} [opts.timeoutMs] - timeout in milliseconds (30s for gate, job timeout for workflow-only)
+ * @param {AbortSignal} [opts.signal] - abort signal for kill handling
  */
-function runCheckCommand(command, payloadJson, cwd) {
+function runWorkflow(command, payloadJson, cwd, opts = {}) {
+  const { timeoutMs = 30_000, signal } = opts;
   return new Promise((resolve, reject) => {
     const child = spawn("bash", ["-c", command], {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      timeout: 30_000,
+      timeout: timeoutMs,
     });
 
     let stdout = "";
@@ -214,6 +222,15 @@ function runCheckCommand(command, payloadJson, cwd) {
     child.stderr.on("data", (data) => { stderr += data.toString(); });
     child.on("error", (err) => reject(err));
     child.on("close", (code) => resolve({ code, stdout, stderr }));
+
+    // Kill on abort signal
+    if (signal) {
+      if (signal.aborted) {
+        child.kill("SIGTERM");
+      } else {
+        signal.addEventListener("abort", () => child.kill("SIGTERM"), { once: true });
+      }
+    }
 
     // Pipe the payload to stdin
     child.stdin.write(payloadJson);
@@ -259,35 +276,114 @@ async function runSingleAgent(runner) {
 
   console.log(`  [${agentName}] ${isResume ? "Resuming" : "Starting"} run ${runId} (${payload.job?.name || "one-off"})`);
 
-  // Execute pre-run check command (if defined) before invoking the LLM
-  let checkOutput = "";
-  if (!isResume && payload.job?.check) {
+  // Execute workflow command (if defined)
+  let workflowOutput = "";
+  const isWorkflowOnly = !!payload.job?.workflow_only;
+  if (!isResume && payload.job?.workflow) {
+    const workflowDir = join(process.env.HARBOUR_HOME || join(homedir(), ".harbour"), "workflows");
+    mkdirSync(workflowDir, { recursive: true });
+
+    // Timeout: 30s for gate (workflow+agent), job timeout for workflow-only
+    const workflowTimeoutMs = isWorkflowOnly
+      ? (payload.job.timeout_minutes || 30) * 60 * 1000
+      : 30_000;
+
+    // Kill polling for workflow execution
+    const workflowKillController = new AbortController();
+    let workflowKilled = false;
+    const workflowKillPoll = setInterval(async () => {
+      if (workflowKilled) return;
+      try {
+        const res = await apiCall(`${url}/api/runs/${runId}/kill`, apiKey);
+        if (res?.kill_requested) {
+          workflowKilled = true;
+          workflowKillController.abort();
+          console.log(`  [${agentName}] Kill requested during workflow — stopping`);
+        }
+      } catch { /* best effort */ }
+    }, KILL_POLL_INTERVAL_MS);
+
     try {
-      const checkResult = await runCheckCommand(payload.job.check, JSON.stringify(payload), workingDir);
-      if (checkResult.code !== 0) {
-        console.log(`  [${agentName}] Check exited ${checkResult.code} — skipping`);
-        if (checkResult.code >= 2 && checkResult.stderr?.trim()) {
-          console.error(`  [${agentName}] Check error: ${checkResult.stderr.trim()}`);
+      const wfResult = await runWorkflow(payload.job.workflow, JSON.stringify(payload), workflowDir, {
+        timeoutMs: workflowTimeoutMs,
+        signal: workflowKillController.signal,
+      });
+      clearInterval(workflowKillPoll);
+
+      if (workflowKilled) {
+        try {
+          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" });
+        } catch { /* best effort */ }
+        return;
+      }
+
+      if (wfResult.code === 77) {
+        // Skip — no work to do
+        console.log(`  [${agentName}] Workflow exited 77 — skipping`);
+        if (wfResult.stderr?.trim()) {
+          try {
+            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: wfResult.stderr.trim() });
+          } catch { /* best effort */ }
         }
         try {
           await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" });
         } catch { /* best effort */ }
         return;
       }
-      checkOutput = checkResult.stdout?.trim() || "";
+
+      if (wfResult.code !== 0) {
+        // Error — any non-zero except 77
+        console.error(`  [${agentName}] Workflow exited ${wfResult.code} — failed`);
+        const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Workflow exited with code ${wfResult.code}`;
+        try {
+          await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
+          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+        } catch { /* best effort */ }
+        return;
+      }
+
+      // Exit 0 — success
+      if (isWorkflowOnly) {
+        // Workflow-only: log output and mark done
+        const output = wfResult.stdout?.trim();
+        if (output) {
+          try {
+            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: output });
+          } catch { /* best effort */ }
+        }
+        try {
+          await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "done" });
+        } catch { /* best effort */ }
+        console.log(`  [${agentName}] Workflow-only run ${runId} completed.`);
+        return;
+      }
+
+      // Workflow + agent: capture output for prompt context
+      workflowOutput = wfResult.stdout?.trim() || "";
     } catch (err) {
-      console.error(`  [${agentName}] Check command failed: ${err.message}`);
+      clearInterval(workflowKillPoll);
+      console.error(`  [${agentName}] Workflow command failed: ${err.message}`);
       try {
-        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" });
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Workflow error: ${err.message}` });
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
       } catch { /* best effort */ }
       return;
     }
   }
 
-  // Build prompt — append check output as additional context
+  // Workflow-only jobs should have returned above; if we get here with no CLI, fail
+  if (isWorkflowOnly) {
+    console.error(`  [${agentName}] Workflow-only job has no workflow command — failing`);
+    try {
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+    } catch { /* best effort */ }
+    return;
+  }
+
+  // Build prompt — append workflow output as additional context
   let prompt = buildPrompt(payload, apiKey, isResume);
-  if (checkOutput) {
-    prompt += `## Pre-run Check Output\n\n${checkOutput}\n\n`;
+  if (workflowOutput) {
+    prompt += `## Workflow Output\n\n${workflowOutput}\n\n`;
   }
 
   // Build CLI command — job-level model/thinking override agent defaults
@@ -557,6 +653,101 @@ async function runSingleAgent(runner) {
   console.log(`  [${agentName}] Run ${runId} completed with status: ${currentStatus}`);
 }
 
+async function runAgentlessWorkflows(url, apiKey) {
+  console.log(`  [workflows] Polling...`);
+
+  let payload;
+  try {
+    payload = await apiCall(`${url}/api/workflows/next`, apiKey);
+  } catch (err) {
+    console.error(`  [workflows] Poll failed: ${err.message}`);
+    return;
+  }
+
+  if (!payload || !payload.run) {
+    console.log(`  [workflows] Nothing to do.`);
+    return;
+  }
+
+  const runId = payload.run.id;
+  console.log(`  [workflows] Starting run ${runId} (${payload.job?.name || "unnamed"})`);
+
+  if (!payload.job?.workflow) {
+    console.error(`  [workflows] No workflow command — failing`);
+    try {
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+    } catch { /* best effort */ }
+    return;
+  }
+
+  const workflowDir = join(process.env.HARBOUR_HOME || join(homedir(), ".harbour"), "workflows");
+  mkdirSync(workflowDir, { recursive: true });
+
+  const workflowTimeoutMs = (payload.job.timeout_minutes || 30) * 60 * 1000;
+
+  // Kill polling
+  const killController = new AbortController();
+  let killed = false;
+  const killPoll = setInterval(async () => {
+    if (killed) return;
+    try {
+      const res = await apiCall(`${url}/api/runs/${runId}/kill`, apiKey);
+      if (res?.kill_requested) {
+        killed = true;
+        killController.abort();
+        console.log(`  [workflows] Kill requested — stopping`);
+      }
+    } catch { /* best effort */ }
+  }, KILL_POLL_INTERVAL_MS);
+
+  try {
+    const wfResult = await runWorkflow(payload.job.workflow, JSON.stringify(payload), workflowDir, {
+      timeoutMs: workflowTimeoutMs,
+      signal: killController.signal,
+    });
+    clearInterval(killPoll);
+
+    if (killed) {
+      try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "killed" }); } catch { /* best effort */ }
+      return;
+    }
+
+    if (wfResult.code === 77) {
+      console.log(`  [workflows] Workflow exited 77 — skipping`);
+      if (wfResult.stderr?.trim()) {
+        try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: wfResult.stderr.trim() }); } catch { /* best effort */ }
+      }
+      try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" }); } catch { /* best effort */ }
+      return;
+    }
+
+    if (wfResult.code !== 0) {
+      console.error(`  [workflows] Workflow exited ${wfResult.code} — failed`);
+      const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Workflow exited with code ${wfResult.code}`;
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+      } catch { /* best effort */ }
+      return;
+    }
+
+    // Exit 0 — success
+    const output = wfResult.stdout?.trim();
+    if (output) {
+      try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: output }); } catch { /* best effort */ }
+    }
+    try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "done" }); } catch { /* best effort */ }
+    console.log(`  [workflows] Run ${runId} completed.`);
+  } catch (err) {
+    clearInterval(killPoll);
+    console.error(`  [workflows] Workflow command failed: ${err.message}`);
+    try {
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Workflow error: ${err.message}` });
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+    } catch { /* best effort */ }
+  }
+}
+
 export async function runAgents() {
   const runners = loadRunnerConfigs();
   if (runners.length === 0) {
@@ -570,6 +761,10 @@ export async function runAgents() {
   for (const runner of runners) {
     work.push(runSingleAgent(runner));
   }
+
+  // Also poll for agentless workflow-only runs
+  const { url, apiKey } = runners[0];
+  work.push(runAgentlessWorkflows(url, apiKey));
 
   await Promise.allSettled(work);
 

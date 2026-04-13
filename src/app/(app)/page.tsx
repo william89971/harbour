@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Bot, Plus, Zap, Pause, Play } from "lucide-react";
+import { Activity, Bot, Terminal, Plus, Zap, Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
@@ -15,7 +15,8 @@ import { useProjectFilter } from "@/lib/hooks/use-project-filter";
 
 type Run = {
   id: string; status: string; job_id: string; job_name: string; job_active: number;
-  agent_name: string; created_at: number; updated_at: number; completed_at: number | null;
+  agent_name: string | null; job_workflow_command: string | null; job_workflow_only: number;
+  created_at: number; updated_at: number; completed_at: number | null;
 };
 
 function RunRow({ run }: { run: Run }) {
@@ -50,8 +51,13 @@ function RunRow({ run }: { run: Run }) {
             <span className="text-sm font-medium">{run.job_name}</span>
           </div>
           <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground">
-            <Bot className="h-3 w-3" />
-            <span>{run.agent_name}</span>
+            {run.job_workflow_only && !run.agent_name ? (
+              <><Terminal className="h-3 w-3" /><span>Workflow</span></>
+            ) : run.job_workflow_command && run.agent_name ? (
+              <><Bot className="h-3 w-3" /><Terminal className="h-3 w-3" /><span>{run.agent_name}</span></>
+            ) : (
+              <><Bot className="h-3 w-3" /><span>{run.agent_name}</span></>
+            )}
           </div>
         </div>
         <span className="text-xs text-muted-foreground shrink-0">{timeAgo(run.completed_at || run.updated_at)}</span>
@@ -110,7 +116,7 @@ export default function RunsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Runs</h1>
-          <p className="text-sm text-muted-foreground mt-1">All run activity across agents.</p>
+          <p className="text-sm text-muted-foreground mt-1">All run activity.</p>
         </div>
         <Button onClick={() => setShowCreate(true)} size="sm">
           <Plus className="h-4 w-4 mr-1.5" /> New Run

@@ -16,13 +16,15 @@ Harbour is the layer underneath your agents — managing what recurring work eac
 
 Harbour is a polling-based control plane. It never calls out to agents — they pull work on their own schedule.
 
-**Jobs** are recurring responsibilities with a schedule, instructions, and references to docs, data, and env vars. When a job fires, it creates a **run**. Agents poll for runs, do the work, post updates, and set a final status — or set it to **waiting** if they need human input.
+**Jobs** are recurring responsibilities with a schedule, instructions, and references to docs, data, and env vars. When a job fires, it creates a **run**. Jobs come in two flavors: **agent jobs** where an AI agent does the work, and **workflow jobs** where a shell command handles everything — no LLM involved. A job can also combine both: a workflow runs first as a gate, and the agent only fires if the workflow exits successfully. Agents poll for runs, do the work, post updates, and set a final status — or set it to **waiting** if they need human input.
 
 **Docs** are shared markdown documents (brand guidelines, processes, strategy) injected into runs automatically. **Databases** are SQLite tables agents create and manage through the API, also injected into runs. **Env Vars** are encrypted key-value pairs (API keys, tokens) decrypted and injected at runtime.
 
-### The `/next` Endpoint
+### The `/next` Endpoints
 
-All agents — harbour and external — get work through `GET /api/agents/:id/next`. The response bundles everything: run context, job instructions, docs, database rows, env vars, and an `api` section with pre-resolved endpoints and status options for the run. Agents use `?peek=true` to check for work without claiming it.
+Agent jobs are discovered through `GET /api/agents/:id/next`. The response bundles everything: run context, job instructions, docs, database rows, env vars, and an `api` section with pre-resolved endpoints and status options for the run. Agents use `?peek=true` to check for work without claiming it.
+
+Workflow-only jobs that have no agent are discovered through `GET /api/workflows/next`. The harbour runner polls both endpoints automatically.
 
 ## Getting Started
 
@@ -48,7 +50,7 @@ Built-in support for running agents via [Claude Code](https://claude.ai/claude-c
 npm run harbour -- agent install
 ```
 
-The runner polls every 60 seconds. All configured agents run concurrently. Logs go to `~/.harbour/runner.log`.
+The runner polls every 60 seconds. All configured agents and agentless workflow jobs run concurrently. Logs go to `~/.harbour/runner.log`.
 
 ```bash
 npm run harbour -- agent list        # show configured agents
@@ -85,8 +87,10 @@ Admin API documentation is served at `/api/admin-guide` and maintained in [ADMIN
 ## Agent API
 
 ```
-GET  /api/agents/:id/next           — get next run (or nothing)
+GET  /api/agents/:id/next           — get next agent run (or nothing)
 GET  /api/agents/:id/next?peek=true — check for work without claiming it
+GET  /api/workflows/next            — get next agentless workflow run (runner only)
+POST /api/jobs                      — create a workflow-only job (no agent)
 PUT  /api/runs/:id/status           — update run status
 POST /api/runs/:id/activity         — add to the run's activity log
 POST /api/runs/:id/retry            — retry a failed/skipped/killed run
@@ -110,11 +114,31 @@ Full API documentation is served at `/api/guide` and maintained in [GUIDE.md](GU
 scheduled → running → done
                     → failed
                     → killed (harbour agent stopped mid-run)
-                    → skipped (pre-run check)
+                    → skipped (workflow determined nothing to do)
                     → waiting (needs human) → pending (human responded) → running → ...
 ```
 
 Failed, skipped, and killed runs can be retried from the dashboard — the run goes back to `pending` and the agent picks it up on next poll. Killed runs can also be resumed via comment, continuing the CLI session where it left off.
+
+## Workflows
+
+Workflows bring deterministic, shell-based execution to Harbour jobs. A workflow is a shell command that the runner executes locally — either as a pre-step before the AI agent, or as the entire job with no AI involved.
+
+**Three execution modes:**
+
+| Mode | Config | What happens |
+|------|--------|-------------|
+| Agent only | No workflow command | Agent runs as normal |
+| Workflow + Agent | Workflow command, workflow_only off | Workflow runs first as a gate. Exit 0 = agent runs with stdout as context. Exit 77 = skip. Other = fail. |
+| Workflow only | Workflow command, workflow_only on | Workflow is the entire job. No agent, no LLM. Exit 0 = done. Exit 77 = skip. Other = fail. |
+
+Workflow-only jobs don't require an agent — they're standalone scheduled commands. The runner receives the full run payload (JSON) on stdin and executes the command with `~/.harbour/workflows/` as the working directory.
+
+```bash
+# Example: workflow-only job that checks an API
+# workflow_command: python3 check_health.py
+# Receives run payload on stdin, prints result to stdout
+```
 
 ## Projects
 
@@ -131,7 +155,7 @@ Projects are an optional way to organize your work. They're a view layer — a b
 ## Dashboard
 
 - **Runs** — running, scheduled, waiting, pending, and recent runs. Create one-off runs or recurring jobs from a unified dialog.
-- **Jobs** — recurring jobs across agents, with run/skip counts, schedules, and linked docs/env vars.
+- **Jobs** — split into Agent Jobs and Workflow Jobs. Shows run/skip counts, schedules, and linked docs/env vars.
 - **Agents** — list of agents with jobs, activity, and poll status. Harbour agents show CLI tool, model, and thinking level.
 - **Docs** — shared knowledge base, editable by humans and agents. Pin docs to auto-attach to all new jobs.
 - **Databases** — read-only view of agent-managed SQLite tables.
