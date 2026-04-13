@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.10.0 — 2026-04-13
+
+### Workflow Jobs
+- New execution mode: workflow-only jobs run shell commands on a schedule with no agent or LLM
+- Three modes: agent-only (default), workflow + agent (workflow gates the agent), workflow-only
+- Workflow-only jobs don't require an agent — standalone scheduled commands
+- Exit code protocol: 0 = success/done, 77 = skip, any other non-zero = failure
+- Runner receives full run payload (JSON) on stdin, executes in `~/.harbour/workflows/`
+- `check_command` renamed to `workflow_command` with new `workflow_only` flag
+
+### Agentless Jobs
+- Jobs and runs no longer require an agent (`agent_id` nullable)
+- `POST /api/jobs` endpoint for creating workflow-only jobs without an agent
+- `GET /api/workflows/next` endpoint for runner discovery of agentless runs
+- Runner polls for agentless workflow runs alongside per-agent polling
+- `requireAgentOwnership` passes through for agentless runs
+
+### Jobs Page
+- Jobs split into "Agent Jobs" and "Workflow Jobs" sections
+- Workflow-only jobs show without agent name
+
+### Create Dialog
+- Agent/Workflow type toggle with Bot and Terminal icons
+- Workflow-only mode hides agent selector, instructions, and model/thinking fields
+- Workflow-only jobs route to `POST /api/jobs` (no agent required)
+
+### Run Icons
+- Workflow-only runs show Terminal icon instead of Bot in runs list and detail
+- Workflow + agent runs show both Bot and Terminal icons
+- Run detail page shows "Workflow" label instead of agent link for agentless runs
+- Subtitle updated from "All run activity across agents" to "All run activity"
+
+### Documentation
+- README: new Workflows section, updated API table, /next endpoints docs
+- ADMIN_GUIDE: workflow-only job creation endpoint and common workflow
+- GUIDE: exit code 77 clarification on skipped status
+- CLAUDE.md: updated conventions and key paths for workflow system
+
 ## v1.9.2 — 2026-04-10
 
 ### Bug Fixes
