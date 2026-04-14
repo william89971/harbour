@@ -14,7 +14,7 @@ import { AlertCircle, Bot, Pin, FileText, KeyRound, Loader2, Paperclip, Plus, Te
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { uploadFileToRun } from "@/lib/upload-client";
 
-type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null };
+type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null };
 type Doc = { id: string; title: string; pinned: number };
 type EnvVar = { id: string; name: string; pinned: number };
 
@@ -518,7 +518,12 @@ export function CreateDialog({
                   <div className="space-y-2">
                     <Label>Workflow Command</Label>
                     <Input value={workflowCommand} onChange={e => setWorkflowCommand(e.target.value)} placeholder="e.g. python3 check_prs.py" className="font-mono text-xs" required />
-                    <p className="text-xs text-muted-foreground">Exit 0 = success, 77 = skip, other = fail.</p>
+                    <p className="text-xs text-muted-foreground">
+                      Exit 0 = success, 77 = skip, other = fail.
+                      {selectedAgent?.remote ? (
+                        <> Script must exist at <code className="text-[11px] bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code> on the remote machine running this agent.</>
+                      ) : null}
+                    </p>
                   </div>
                 )}
 

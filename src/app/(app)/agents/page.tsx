@@ -59,8 +59,9 @@ export default function AgentsPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
-  const [newAgent, setNewAgent] = useState<{ id: string; name: string; apiKey: string; type: string } | null>(null);
+  const [newAgent, setNewAgent] = useState<{ id: string; name: string; apiKey: string; type: string; remote?: boolean; cli?: string | null; model?: string | null; thinking?: string | null } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [remoteAgent, setRemoteAgent] = useState(false);
 
   // Type selection
   const [agentType, setAgentType] = useState<"harbour" | "external" | null>(null);
@@ -100,7 +101,7 @@ export default function AgentsPage() {
     if (!name.trim()) return;
     setCreating(true);
 
-    const body: Record<string, string> = { name, description };
+    const body: Record<string, string | boolean> = { name, description };
     if (agentType === "harbour") {
       body.type = "harbour";
       if (selectedCli && selectedCli !== "none") {
@@ -108,6 +109,7 @@ export default function AgentsPage() {
         body.model = selectedModel;
         if (selectedThinking) body.thinking = selectedThinking;
       }
+      if (remoteAgent) body.remote = true;
     }
 
     const res = await fetch("/api/agents", {
@@ -117,7 +119,16 @@ export default function AgentsPage() {
     });
     if (res.ok) {
       const data = await res.json();
-      setNewAgent({ id: data.id, name: data.name, apiKey: data.apiKey, type: agentType || "external" });
+      setNewAgent({
+        id: data.id,
+        name: data.name,
+        apiKey: data.apiKey,
+        type: agentType || "external",
+        remote: !!data.remote,
+        cli: data.cli ?? null,
+        model: data.model ?? null,
+        thinking: data.thinking ?? null,
+      });
       setName("");
       setDescription("");
       // Auto-link to active project if one is selected
@@ -169,6 +180,27 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
     setSelectedModel("");
     setSelectedThinking("");
     setCliTools([]);
+    setRemoteAgent(false);
+  }
+
+  function getConnectBlob() {
+    if (!newAgent) return "";
+    const base = typeof window !== "undefined" ? window.location.origin : "";
+    const payload = {
+      url: base,
+      agentId: newAgent.id,
+      apiKey: newAgent.apiKey,
+      name: newAgent.name,
+      cli: newAgent.cli,
+      model: newAgent.model,
+      thinking: newAgent.thinking,
+    };
+    if (typeof window === "undefined") return "";
+    return btoa(JSON.stringify(payload));
+  }
+
+  function getConnectCommand() {
+    return `harbour agent connect ${getConnectBlob()}`;
   }
 
   if (loading) {
@@ -254,14 +286,34 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
           {newAgent ? (
             // Success state
             newAgent.type === "harbour" ? (
-              <div className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  <strong>{newAgent.name}</strong> is ready. Create a job for this agent and it will start picking up work automatically.
-                </p>
-                <DialogFooter>
-                  <Button onClick={handleCloseCreate}>Done</Button>
-                </DialogFooter>
-              </div>
+              newAgent.remote ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>{newAgent.name}</strong> is ready. On the remote machine (with harbour cloned and <code className="text-xs bg-muted px-1 py-0.5 rounded">npm install</code> done), run:
+                  </p>
+                  <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono break-all select-all max-h-48 overflow-y-auto">
+                    {getConnectCommand()}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    The command contains the agent API key. Treat it like a password. If you add workflow gates to this agent&apos;s jobs, the scripts must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code> on the remote machine.
+                  </p>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => { navigator.clipboard.writeText(getConnectCommand()); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+                      {copied ? <><Check className="h-4 w-4 mr-1.5" /> Copied</> : <><Copy className="h-4 w-4 mr-1.5" /> Copy Command</>}
+                    </Button>
+                    <Button onClick={handleCloseCreate}>Done</Button>
+                  </DialogFooter>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    <strong>{newAgent.name}</strong> is ready. Create a job for this agent and it will start picking up work automatically.
+                  </p>
+                  <DialogFooter>
+                    <Button onClick={handleCloseCreate}>Done</Button>
+                  </DialogFooter>
+                </div>
+              )
             ) : (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
@@ -367,6 +419,24 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                   onThinkingChange={setSelectedThinking}
                   defaultThinkingLabel="Default"
                 />
+              )}
+              {agentType === "harbour" && (
+                <div className="rounded-md border p-3 space-y-2">
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={remoteAgent}
+                      onChange={e => setRemoteAgent(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <div className="text-sm">
+                      <p className="font-medium">Run on a different machine</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Skip local runner setup. You&apos;ll get a connect command to paste on the remote machine (e.g. a Mac for iOS builds).
+                      </p>
+                    </div>
+                  </label>
+                </div>
               )}
               <DialogFooter>
                 <Button type="button" variant="ghost" onClick={() => {

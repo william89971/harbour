@@ -47,6 +47,14 @@ make rebuild  # rebuild image and restart (after code changes)
 make clean    # stop and wipe ./data (destructive)
 ```
 
+To simulate a remote-runner setup end-to-end (see [Running the runner on a different machine](#running-the-runner-on-a-different-machine)), add the `remote` profile:
+
+```bash
+docker compose --profile remote up -d
+```
+
+This brings up a second container (`harbour-remote`) that polls the server and acts as if it were a separate machine. Useful for testing the connect flow locally before pointing a real Mac/Linux box at your harbour.
+
 ### Without Docker
 
 ```bash
@@ -92,6 +100,32 @@ npm run harbour -- agent uninstall   # stop the runner
 The runner injects the Harbour API credentials and endpoints into each prompt, so harbour agents can set run status (`done`, `waiting`, `failed`), post activity messages, and manage docs and databases — just like external agents. If an agent doesn't set a final status, the runner marks the run as failed. Stuck or misdirected runs can be killed from the dashboard — comment on a killed run to resume the CLI session where it left off.
 
 Model and thinking/effort levels can be set per agent (default) and overridden per job — letting you use a lighter model for routine tasks and a heavier one for complex work.
+
+#### Running the runner on a different machine
+
+Sometimes a job needs to run on a specific machine — iOS/Xcode builds on a Mac, GPU work on a workstation — while the harbour server lives elsewhere. Harbour supports this by letting you mark an agent as **remote**: harbour won't install a local runner for it, and you run the runner on the target machine instead.
+
+1. On harbour, **New Agent** → Harbour Agent → pick a CLI → enable **"Run on a different machine"** → Create. Copy the `harbour agent connect <blob>` command.
+2. On the remote machine, clone harbour and install dependencies:
+   ```bash
+   git clone https://github.com/geekforbrains/harbour.git
+   cd harbour
+   npm install
+   ```
+3. Paste the command on the remote machine:
+   ```bash
+   npm run harbour -- agent connect <blob>
+   ```
+   The CLI decodes the blob, verifies it can reach harbour with the API key, and writes an entry to `~/.harbour/runners.json`.
+4. Schedule polling the same way as local agents: `npm run harbour -- agent install` (macOS / launchd).
+
+The blob contains the agent's API key — treat it like a password. If it's ever lost or leaked, open the agent detail page, click the **Connect Remote Runner** button, and generate a new command (rotates the key).
+
+**Two caveats worth knowing:**
+- **Reachability.** The remote machine must be able to reach harbour at the URL embedded in the blob. Tailscale or any private-mesh tool works well for home setups; otherwise expose harbour behind whatever you normally use for remote HTTP.
+- **Workflow scripts run locally.** If the agent's jobs use a workflow gate (shell command), that script must live at `~/.harbour/workflows/` on the remote machine, not on the harbour server. Keep the scripts in a git repo and sync as you would any other dotfile.
+
+Remote runners skip the agentless workflow-only poll (`/api/workflows/next`) — those jobs stay with whichever runner is co-located with the harbour server.
 
 ### External Agents
 

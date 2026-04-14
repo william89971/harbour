@@ -428,6 +428,9 @@ export function initializeSchema(db: Database.Database) {
   if (!agentCols.some((c: any) => c.name === "thinking")) {
     db.exec(`ALTER TABLE agents ADD COLUMN thinking TEXT`);
   }
+  if (!agentCols.some((c: any) => c.name === "remote")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN remote INTEGER NOT NULL DEFAULT 0`);
+  }
 
   // Migrations: add pinned column to docs table
   const docCols2 = db.prepare(`PRAGMA table_info(docs)`).all() as any[];

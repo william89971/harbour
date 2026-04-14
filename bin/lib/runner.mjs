@@ -768,6 +768,19 @@ async function runAgentlessWorkflows(url, apiKey) {
   }
 }
 
+// Workflow-only jobs (agentless) are meant to run on the server host, not on
+// remote worker machines. If every configured runner points at a remote URL
+// (non-localhost), we skip the /api/workflows/next poll so remote workers
+// don't grab jobs intended for the server box.
+function isLocalUrl(url) {
+  try {
+    const host = new URL(url).hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
+  } catch {
+    return false;
+  }
+}
+
 export async function runAgents() {
   const runners = loadRunnerConfigs();
   if (runners.length === 0) {
@@ -782,9 +795,13 @@ export async function runAgents() {
     work.push(runSingleAgent(runner));
   }
 
-  // Also poll for agentless workflow-only runs
-  const { url, apiKey } = runners[0];
-  work.push(runAgentlessWorkflows(url, apiKey));
+  // Poll workflow-only jobs only against URLs this host is "local" to.
+  // A runner pointing at localhost means the server is on this machine, so
+  // we own the workflow-only queue for that URL. Remote runners skip it.
+  const localRunner = runners.find(r => isLocalUrl(r.url));
+  if (localRunner) {
+    work.push(runAgentlessWorkflows(localRunner.url, localRunner.apiKey));
+  }
 
   await Promise.allSettled(work);
 

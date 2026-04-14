@@ -24,7 +24,7 @@ import { RunStatusIcon } from "@/components/app/run-status";
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 
-type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; last_polled_at: number | null; created_at: number };
+type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; last_polled_at: number | null; created_at: number };
 type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; workflow_command: string | null; workflow_only: number };
 type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
@@ -91,6 +91,8 @@ export default function AgentDetailPage() {
   const [copied, setCopied] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
+  const [showConnect, setShowConnect] = useState(false);
+  const [connectCopied, setConnectCopied] = useState(false);
 
   async function handleUpdateAgent() {
     const body: Record<string, string> = { name: editName, description: editDesc };
@@ -187,6 +189,11 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
               </Button>
             </>
           )}
+          {agent.type === "harbour" && agent.remote ? (
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setShowConnect(true)} title="Connect Remote Runner">
+              <Wifi className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setShowSettings(true); }} title="Settings">
             <Settings className="h-3.5 w-3.5" />
           </Button>
@@ -394,6 +401,56 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
               <Button onClick={() => setShowInvite(false)}>Done</Button>
             </DialogFooter>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Connect Remote Runner Dialog */}
+      <Dialog open={showConnect} onOpenChange={(open) => { setShowConnect(open); if (!open) { setNewApiKey(null); setConnectCopied(false); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Connect Remote Runner</DialogTitle></DialogHeader>
+          {newApiKey ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Run this on the remote machine. The command embeds a fresh API key — any previously-connected runner for this agent has been invalidated.
+              </p>
+              <div className="rounded-md bg-muted px-3 py-2 text-xs font-mono break-all select-all max-h-48 overflow-y-auto">
+                {(() => {
+                  if (!agent || !newApiKey) return "";
+                  const base = typeof window !== "undefined" ? window.location.origin : "";
+                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking };
+                  const blob = typeof window !== "undefined" ? btoa(JSON.stringify(payload)) : "";
+                  return `harbour agent connect ${blob}`;
+                })()}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Workflow gate scripts used by this agent&apos;s jobs must exist at <code className="text-xs bg-muted px-1 py-0.5 rounded">~/.harbour/workflows/</code> on the remote machine.
+              </p>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => {
+                  if (!agent || !newApiKey) return;
+                  const base = typeof window !== "undefined" ? window.location.origin : "";
+                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking };
+                  const blob = btoa(JSON.stringify(payload));
+                  navigator.clipboard.writeText(`harbour agent connect ${blob}`);
+                  setConnectCopied(true);
+                  setTimeout(() => setConnectCopied(false), 2000);
+                }}>
+                  {connectCopied ? <><Check className="h-4 w-4 mr-1.5" /> Copied</> : <><Copy className="h-4 w-4 mr-1.5" /> Copy Command</>}
+                </Button>
+                <Button onClick={() => { setShowConnect(false); setNewApiKey(null); }}>Done</Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Generate a connect command for this remote agent. This rotates the API key — any previously-connected runner will stop working until you reconnect it with the new command.
+              </p>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setShowConnect(false)}>Cancel</Button>
+                <Button onClick={handleRotateKey}>Generate Command</Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

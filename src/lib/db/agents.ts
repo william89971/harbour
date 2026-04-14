@@ -11,7 +11,7 @@ function hashApiKey(key: string): string {
   return crypto.createHash("sha256").update(key).digest("hex");
 }
 
-export function createAgent(name: string, description?: string, opts?: { type?: string; cli?: string; model?: string; thinking?: string }) {
+export function createAgent(name: string, description?: string, opts?: { type?: string; cli?: string; model?: string; thinking?: string; remote?: boolean }) {
   const db = getDb();
   const id = uuid();
   const apiKey = generateApiKey();
@@ -20,10 +20,11 @@ export function createAgent(name: string, description?: string, opts?: { type?: 
   const cli = opts?.cli || null;
   const model = opts?.model || null;
   const thinking = opts?.thinking || null;
+  const remote = opts?.remote ? 1 : 0;
   db.prepare(
-    `INSERT INTO agents (id, name, description, api_key_hash, type, cli, model, thinking) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, name, description || null, apiKeyHash, type, cli, model, thinking);
-  return { id, name, description, apiKey, type, cli, model, thinking };
+    `INSERT INTO agents (id, name, description, api_key_hash, type, cli, model, thinking, remote) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, name, description || null, apiKeyHash, type, cli, model, thinking, remote);
+  return { id, name, description, apiKey, type, cli, model, thinking, remote: !!remote };
 }
 
 export function authenticateAgent(apiKey: string) {
@@ -43,14 +44,14 @@ export function rotateAgentKey(agentId: string) {
 
 export function getAgentById(id: string) {
   const db = getDb();
-  return db.prepare(`SELECT id, name, description, type, cli, model, thinking, last_polled_at, created_at, updated_at FROM agents WHERE id = ?`).get(id) as any || null;
+  return db.prepare(`SELECT id, name, description, type, cli, model, thinking, remote, last_polled_at, created_at, updated_at FROM agents WHERE id = ?`).get(id) as any || null;
 }
 
 export function listAgents(projectId?: string) {
   const db = getDb();
   if (projectId) {
     return db.prepare(`
-      SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.last_polled_at, a.created_at,
+      SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.last_polled_at, a.created_at,
         (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
         (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
         (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,
@@ -61,7 +62,7 @@ export function listAgents(projectId?: string) {
     `).all(projectId);
   }
   return db.prepare(`
-    SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.last_polled_at, a.created_at,
+    SELECT a.id, a.name, a.description, a.type, a.cli, a.model, a.thinking, a.remote, a.last_polled_at, a.created_at,
       (SELECT COUNT(*) FROM jobs WHERE agent_id = a.id) as job_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'waiting') as waiting_count,
       (SELECT COUNT(*) FROM runs WHERE agent_id = a.id AND status = 'pending') as pending_count,

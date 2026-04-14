@@ -53,3 +53,5 @@ harbour.db-shm
 
 # claude code worktrees
 .claude/worktrees/
+data/
+data-remote/

@@ -10,7 +10,7 @@ export const GET = withAuth(async (req) => {
 
 export const POST = withUserAuth(async (req) => {
   const body = await req.json();
-  const { name, description, type, cli, model, thinking } = body;
+  const { name, description, type, cli, model, thinking, remote } = body;
   if (!name) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
@@ -20,10 +20,12 @@ export const POST = withUserAuth(async (req) => {
     }
   }
 
-  const agent = createAgent(name, description, type === "harbour" ? { type, cli, model, thinking } : undefined);
+  const agent = createAgent(name, description, type === "harbour" ? { type, cli, model, thinking, remote: !!remote } : undefined);
 
-  // For harbour agents, save runner config locally so the CLI can poll
-  if (type === "harbour") {
+  // For harbour agents running on the same machine as the server, save runner
+  // config locally so the CLI can poll. Remote agents are expected to be
+  // registered from the remote host via `harbour agent connect`.
+  if (type === "harbour" && !remote) {
     const baseUrl = req.headers.get("origin") || `http://localhost:${process.env.PORT || 3000}`;
     saveRunnerConfig({
       agentId: agent.id,
