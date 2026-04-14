@@ -40,13 +40,13 @@ Visit [http://localhost:3000](http://localhost:3000) and create your first accou
 
 ### Updating
 
-When Harbour is running under launchd on macOS, rebuilding in place leaves the running server referencing chunks that get replaced mid-build — pages render unstyled until the server restarts. Use the release script to stop, build, and start cleanly:
+When Harbour is running under launchd on macOS, rebuilding in place leaves the running server referencing chunks that get replaced mid-build — pages render unstyled until the server restarts. Use the release script to rebuild and bounce the whole local stack:
 
 ```bash
 npm run release
 ```
 
-The script uses `launchctl bootout` / `bootstrap` against `com.harbour.server` and verifies the service is back up. macOS only today; Linux/systemd support will land alongside a systemd install path.
+The script stops `com.harbour.server`, rebuilds, starts it back up, and then restarts `com.harbour.agent-runner` so it picks up any changes under `bin/`. If the agent-runner isn't installed, it's skipped. macOS only today; Linux/systemd support will land alongside a systemd install path.
 
 ### Harbour Agents
 
