@@ -1,0 +1,13 @@
+services:
+  harbour:
+    build:
+      context: .
+    image: harbour:local
+    container_name: harbour
+    restart: unless-stopped
+    ports:
+      - "3030:3000"
+    environment:
+      HARBOUR_HOME: /data
+    volumes:
+      - ./data:/data

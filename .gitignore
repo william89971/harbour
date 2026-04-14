@@ -45,6 +45,9 @@ harbour.db
 harbour.db-wal
 harbour.db-shm
 
+# docker compose local state (HARBOUR_HOME bind mount)
+/data
+
 # playwright
 .playwright-cli/
 

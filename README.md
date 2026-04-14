@@ -28,6 +28,27 @@ Workflow-only jobs that have no agent are discovered through `GET /api/workflows
 
 ## Getting Started
 
+### With Docker (recommended)
+
+Only requirement is Docker.
+
+```bash
+git clone https://github.com/geekforbrains/harbour.git
+cd harbour
+make run
+```
+
+Visit [http://localhost:3030](http://localhost:3030) and create your first account. All state (DB, uploads, encryption key) lives in `./data` — back up that directory and you have a snapshot of everything.
+
+```bash
+make logs     # follow logs
+make down     # stop the container
+make rebuild  # rebuild image and restart (after code changes)
+make clean    # stop and wipe ./data (destructive)
+```
+
+### Without Docker
+
 ```bash
 git clone https://github.com/geekforbrains/harbour.git
 cd harbour
