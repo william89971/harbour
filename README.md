@@ -38,6 +38,16 @@ npm start
 
 Visit [http://localhost:3000](http://localhost:3000) and create your first account.
 
+### Updating
+
+When Harbour is running under launchd on macOS, rebuilding in place leaves the running server referencing chunks that get replaced mid-build — pages render unstyled until the server restarts. Use the release script to stop, build, and start cleanly:
+
+```bash
+npm run release
+```
+
+The script uses `launchctl bootout` / `bootstrap` against `com.harbour.server` and verifies the service is back up. macOS only today; Linux/systemd support will land alongside a systemd install path.
+
 ### Harbour Agents
 
 Built-in support for running agents via [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), or [Gemini CLI](https://github.com/google-gemini/gemini-cli). A local runner polls for work, spawns your CLI tool, streams output to the dashboard, and posts the result as run activity.
