@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.10.1 — 2026-04-14
+
+### Mobile
+- Render agent-uploaded attachments in the mobile run activity view
+
 ## v1.10.0 — 2026-04-13
 
 ### Workflow Jobs
