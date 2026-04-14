@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.11.0 — 2026-04-14
+
+### Remote Runners
+
+- Harbour agents can now run on a different machine than the harbour server — useful when a job needs a specific host (iOS/Xcode builds on a Mac, GPU work on a workstation, etc.) while the server lives elsewhere.
+- New **"Run on a different machine"** toggle in the New Agent dialog (harbour agents only) skips local runner-config installation and exposes a `harbour agent connect <blob>` command instead.
+- New CLI subcommand: `harbour agent connect <base64-blob>` — decodes the blob, verifies auth against `/api/agents/:id/next?peek=true`, and writes the entry to the remote machine's `~/.harbour/runners.json`.
+- Agent detail page has a **Connect Remote Runner** action that rotates the API key and generates a fresh connect command (useful if the original is lost).
+- Job form warns when the selected agent is remote: workflow gate scripts must live at `~/.harbour/workflows/` on the remote machine, not the server.
+- Remote-only runners skip the `/api/workflows/next` poll — agentless workflow-only jobs stay with the runner co-located with the harbour server.
+- New `agents.remote` column (migration handled automatically on startup).
+
+### Docker
+
+- Added `Dockerfile.runner` — minimal node image that runs just `harbour agent run` on a 60s loop.
+- New `harbour-remote` compose service (under the `remote` profile) for end-to-end validation of the remote-runner flow on a single host.
+
+### Documentation
+
+- README: new "Running the runner on a different machine" section with the connect flow, reachability notes, and workflow-script caveat.
+
 ## v1.10.1 — 2026-04-14
 
 ### Mobile
