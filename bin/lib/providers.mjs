@@ -418,6 +418,14 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
     let gotOutput = false;
     let aborted = false;
     let killFollowupTimer = null;
+    let closeFired = false;
+    let postExitTimer = null;
+    // If the CLI spawns grandchildren that inherit our stdout/stderr pipes
+    // (docker compose, dev servers, simulators), "close" won't fire until
+    // those descendants release the fds — which can be never. After the
+    // process itself exits, give pipes a brief grace to drain, then
+    // destroy them so the wrapper can resolve.
+    const POST_EXIT_GRACE_MS = 2000;
 
     // Kill the process if no stdout arrives within the startup window.
     // Catches auth prompts, interactive login hangs, etc.
@@ -468,12 +476,22 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
     child.on("error", (err) => {
       clearTimeout(startupTimer);
       if (killFollowupTimer) clearTimeout(killFollowupTimer);
+      if (postExitTimer) clearTimeout(postExitTimer);
       if (signal) signal.removeEventListener("abort", handleAbort);
       reject(err);
     });
+    child.on("exit", () => {
+      postExitTimer = setTimeout(() => {
+        if (closeFired) return;
+        try { child.stdout?.destroy(); } catch {}
+        try { child.stderr?.destroy(); } catch {}
+      }, POST_EXIT_GRACE_MS);
+    });
     child.on("close", (code) => {
+      closeFired = true;
       clearTimeout(startupTimer);
       if (killFollowupTimer) clearTimeout(killFollowupTimer);
+      if (postExitTimer) clearTimeout(postExitTimer);
       if (signal) signal.removeEventListener("abort", handleAbort);
       // Flush remaining buffer
       if (onLine && lineBuffer.trim()) {

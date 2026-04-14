@@ -217,11 +217,31 @@ function runWorkflow(command, payloadJson, cwd, opts = {}) {
 
     let stdout = "";
     let stderr = "";
+    let closeFired = false;
+    let postExitTimer = null;
+    // Workflows can background processes (dev servers, docker) that inherit
+    // our stdout/stderr. Guard against "close" never firing by destroying
+    // the pipes shortly after the workflow process itself exits.
+    const POST_EXIT_GRACE_MS = 2000;
 
     child.stdout.on("data", (data) => { stdout += data.toString(); });
     child.stderr.on("data", (data) => { stderr += data.toString(); });
-    child.on("error", (err) => reject(err));
-    child.on("close", (code) => resolve({ code, stdout, stderr }));
+    child.on("error", (err) => {
+      if (postExitTimer) clearTimeout(postExitTimer);
+      reject(err);
+    });
+    child.on("exit", () => {
+      postExitTimer = setTimeout(() => {
+        if (closeFired) return;
+        try { child.stdout?.destroy(); } catch {}
+        try { child.stderr?.destroy(); } catch {}
+      }, POST_EXIT_GRACE_MS);
+    });
+    child.on("close", (code) => {
+      closeFired = true;
+      if (postExitTimer) clearTimeout(postExitTimer);
+      resolve({ code, stdout, stderr });
+    });
 
     // Kill on abort signal
     if (signal) {
