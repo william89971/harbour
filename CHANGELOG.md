@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.11.1 — 2026-04-14
+
+### Mobile
+- Edit-job dialog now includes Docs and Env Vars management (chip lists with add/remove), matching the create-job dialog. Previously, managing these links on mobile required the detail-page X buttons, which were hover-only and unreachable on touch.
+- Detail-page Docs/Env Vars X buttons are always visible below the `sm:` breakpoint (hover-only is desktop behavior now).
+
 ## v1.11.0 — 2026-04-14
 
 ### Remote Runners
