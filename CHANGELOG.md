@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.12.0 — 2026-04-15
+
+### Mobile
+- Run detail view now renders file attachments inline within the activity feed. Image attachments (PNG, JPG) display as expandable thumbnails; other files show as downloadable links. Previously, attachments uploaded via the API were invisible in the UI.
+- Run detail header now stacks into two rows on mobile breakpoints: title on row 1 (full width), status badge and action buttons on row 2. This prevents layout collisions with long job names like "Hearsay Nightly Review" and eliminates text wrapping issues around the status badge.
+
 ## v1.11.1 — 2026-04-14
 
 ### Mobile
