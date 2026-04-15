@@ -76,6 +76,35 @@ npm run build                   # rebuild
 npm start -- -p 3000 &          # restart in background
 ```
 
+## Release flow
+
+Cutting a tagged release is manual — `npm run release` only rebuilds and
+bounces the local stack (macOS/launchd), it does NOT create a version. The
+release itself is a single commit touching three files, then a tag.
+
+For a release `vX.Y.Z`:
+
+1. Add a section at the top of `CHANGELOG.md` matching the existing style:
+   `## vX.Y.Z — YYYY-MM-DD`, followed by one or more `### <Topic>` subheads
+   with human-readable bullets (not raw commit subjects).
+2. Bump both `package.json` and `package-lock.json` at once:
+   `npm version X.Y.Z --no-git-tag-version`
+3. Commit (this commit should ONLY touch the three files above):
+   ```
+   git add CHANGELOG.md package.json package-lock.json
+   git commit -m "chore: release vX.Y.Z"
+   ```
+4. Tag and push:
+   ```
+   git tag vX.Y.Z
+   git push && git push origin vX.Y.Z
+   ```
+
+Version bump convention:
+- **Patch** (e.g. v1.11.0 → v1.11.1) — bug fixes only
+- **Minor** (e.g. v1.10.1 → v1.11.0) — new features, backwards-compatible
+- **Major** — breaking changes (none cut so far)
+
 ## Browser testing / screenshots
 
 Use `playwright-cli` for visual review and screenshots. The dev server must be running first (see above).
