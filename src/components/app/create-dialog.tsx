@@ -19,7 +19,7 @@ type Doc = { id: string; title: string; pinned: number };
 type EnvVar = { id: string; name: string; pinned: number };
 
 // Sub-dialog for picking docs or env vars
-function PickerDialog({
+export function PickerDialog({
   open,
   onOpenChange,
   title,
@@ -75,7 +75,7 @@ function PickerDialog({
 }
 
 // Compact display of selected items with remove buttons
-function SelectedItems({
+export function SelectedItems({
   items,
   selectedIds,
   onRemove,

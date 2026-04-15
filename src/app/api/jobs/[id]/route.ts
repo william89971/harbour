@@ -23,6 +23,12 @@ export const PUT = withAuth(async (req, auth, { params }) => {
     }
     body.schedule = normalized;
   }
+  if (body.docIds !== undefined && !Array.isArray(body.docIds)) {
+    return NextResponse.json({ error: "docIds must be an array of strings" }, { status: 400 });
+  }
+  if (body.envVarIds !== undefined && !Array.isArray(body.envVarIds)) {
+    return NextResponse.json({ error: "envVarIds must be an array of strings" }, { status: 400 });
+  }
   const updated = updateJob(id, body);
   return NextResponse.json(updated);
 });

@@ -21,6 +21,7 @@ import {
   FileText, Database, Play, Pause, Bot, Calendar, RotateCcw, CalendarClock, Cpu, KeyRound, Zap,
 } from "lucide-react";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
+import { SelectedItems, PickerDialog } from "@/components/app/create-dialog";
 import { timeAgo, formatTimestamp } from "@/lib/time";
 import { StatusDot } from "@/components/app/run-status";
 
@@ -143,6 +144,10 @@ export default function JobDetailPage() {
   const [editTimeout, setEditTimeout] = useState(30);
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
+  const [editDocIds, setEditDocIds] = useState<string[]>([]);
+  const [editEnvVarIds, setEditEnvVarIds] = useState<string[]>([]);
+  const [showEditDocPicker, setShowEditDocPicker] = useState(false);
+  const [showEditEnvVarPicker, setShowEditEnvVarPicker] = useState(false);
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
@@ -159,6 +164,8 @@ export default function JobDetailPage() {
         timeoutMinutes: editTimeout,
         model: editModel || "",
         thinking: editThinking || "",
+        docIds: editDocIds,
+        envVarIds: editEnvVarIds,
       }),
     });
     if (!res.ok) { alert("Failed to update job"); return; }
@@ -240,7 +247,7 @@ export default function JobDetailPage() {
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleToggleActive} title={job.active ? "Pause" : "Resume"}>
             {job.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </Button>
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditWorkflowCommand(job.workflow_command || ""); setEditWorkflowOnly(!!job.workflow_only); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); } setShowEdit(true); }} title="Edit">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { if (job) { setEditName(job.name); setEditDesc(job.description || ""); setEditInstructions(job.instructions || ""); setEditSchedule(parseSchedule(job.schedule)); setEditWorkflowCommand(job.workflow_command || ""); setEditWorkflowOnly(!!job.workflow_only); setEditTimeout(job.timeout_minutes ?? 30); setEditModel(job.model || ""); setEditThinking(job.thinking || ""); setEditDocIds(job.docs.map(d => d.id)); setEditEnvVarIds(job.envVars.map(ev => ev.id)); } setShowEdit(true); }} title="Edit">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -307,7 +314,7 @@ export default function JobDetailPage() {
                 <Link href={`/docs/${d.id}`} className="text-sm font-medium flex-1 min-w-0 truncate hover:text-primary transition-colors">
                   {d.title}
                 </Link>
-                <button onClick={() => handleUnlinkDoc(d.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all shrink-0" title="Remove">
+                <button onClick={() => handleUnlinkDoc(d.id)} className="text-muted-foreground hover:text-destructive transition-colors shrink-0 sm:opacity-0 sm:group-hover:opacity-100" title="Remove">
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -353,7 +360,7 @@ export default function JobDetailPage() {
                 <Link href={`/env-vars/${ev.id}`} className="text-sm font-mono font-medium flex-1 min-w-0 truncate hover:text-primary transition-colors">
                   {ev.name}
                 </Link>
-                <button onClick={() => handleUnlinkEnvVar(ev.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all shrink-0" title="Remove">
+                <button onClick={() => handleUnlinkEnvVar(ev.id)} className="text-muted-foreground hover:text-destructive transition-colors shrink-0 sm:opacity-0 sm:group-hover:opacity-100" title="Remove">
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -495,6 +502,23 @@ export default function JobDetailPage() {
                 defaultThinkingLabel={`Agent default${agent.thinking ? ` (${agent.thinking})` : ""}`}
               />
             )}
+            <SelectedItems
+              items={allDocs.map(d => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+              selectedIds={editDocIds}
+              onRemove={did => setEditDocIds(prev => prev.filter(i => i !== did))}
+              onAdd={() => setShowEditDocPicker(true)}
+              icon={FileText}
+              label="Docs"
+            />
+            <SelectedItems
+              items={allEnvVars}
+              selectedIds={editEnvVarIds}
+              onRemove={evid => setEditEnvVarIds(prev => prev.filter(i => i !== evid))}
+              onAdd={() => setShowEditEnvVarPicker(true)}
+              icon={KeyRound}
+              label="Env Vars"
+              nameClass="font-mono"
+            />
             <DialogFooter>
               <Button type="button" variant="destructive" onClick={handleDelete} className="mr-auto"><Trash2 className="h-4 w-4 mr-1" /> Delete</Button>
               <Button type="button" variant="ghost" onClick={() => setShowEdit(false)}>Cancel</Button>
@@ -503,6 +527,27 @@ export default function JobDetailPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Edit dialog sub-pickers */}
+      <PickerDialog
+        open={showEditDocPicker}
+        onOpenChange={setShowEditDocPicker}
+        title="Select Docs"
+        items={allDocs.map(d => ({ id: d.id, name: d.title, pinned: d.pinned }))}
+        selectedIds={new Set(editDocIds)}
+        onToggle={did => setEditDocIds(prev => prev.includes(did) ? prev.filter(i => i !== did) : [...prev, did])}
+        icon={FileText}
+      />
+      <PickerDialog
+        open={showEditEnvVarPicker}
+        onOpenChange={setShowEditEnvVarPicker}
+        title="Select Env Vars"
+        items={allEnvVars}
+        selectedIds={new Set(editEnvVarIds)}
+        onToggle={evid => setEditEnvVarIds(prev => prev.includes(evid) ? prev.filter(i => i !== evid) : [...prev, evid])}
+        icon={KeyRound}
+        nameClass="font-mono"
+      />
 
       {/* Trigger Dialog */}
       <TriggerDialog jobId={id} jobName={job.name} open={showTrigger} onOpenChange={setShowTrigger} workflowOnly={!!job.workflow_only} />

@@ -134,7 +134,8 @@ export function updateJob(id: string, data: {
   model?: string;
   thinking?: string;
   timeoutMinutes?: number;
-
+  docIds?: string[];
+  envVarIds?: string[];
   active?: boolean;
   nextRunAt?: number;
 }) {
@@ -166,10 +167,24 @@ export function updateJob(id: string, data: {
     }
   }
   if (data.nextRunAt !== undefined) { fields.push("next_run_at = ?"); values.push(data.nextRunAt); }
-  if (fields.length === 0) return getJobById(id);
-  fields.push("updated_at = unixepoch()");
-  values.push(id);
-  db.prepare(`UPDATE jobs SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+
+  const update = db.transaction(() => {
+    if (fields.length > 0) {
+      fields.push("updated_at = unixepoch()");
+      db.prepare(`UPDATE jobs SET ${fields.join(", ")} WHERE id = ?`).run(...values, id);
+    }
+    if (data.docIds !== undefined) {
+      db.prepare(`DELETE FROM job_docs WHERE job_id = ?`).run(id);
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_docs (job_id, doc_id) VALUES (?, ?)`);
+      for (const docId of data.docIds) linkStmt.run(id, docId);
+    }
+    if (data.envVarIds !== undefined) {
+      db.prepare(`DELETE FROM job_env_vars WHERE job_id = ?`).run(id);
+      const linkStmt = db.prepare(`INSERT OR IGNORE INTO job_env_vars (job_id, env_var_id) VALUES (?, ?)`);
+      for (const envId of data.envVarIds) linkStmt.run(id, envId);
+    }
+  });
+  update();
   return getJobById(id);
 }
 
