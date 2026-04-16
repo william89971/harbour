@@ -1,6 +1,8 @@
 #cloud-config
-# Harbour droplet bootstrap. Installs docker, caddy (HTTPS + Basic Auth),
-# fail2ban, ufw, security updates, node 22, three AI CLIs, and runs harbour.
+# Harbour droplet bootstrap. Installs node 22, three AI CLIs, caddy
+# (HTTPS + Basic Auth), fail2ban, ufw, security updates, and runs harbour
+# directly as a systemd service (no docker) - single-purpose admin box,
+# simpler to operate and update.
 
 package_update: true
 package_upgrade: true
@@ -149,17 +151,47 @@ write_files:
     permissions: "0644"
     content: |
       [Unit]
-      Description=Harbour (docker compose)
-      Requires=docker.service
-      After=docker.service network-online.target
+      Description=Harbour (Next.js server)
+      After=network-online.target
       Wants=network-online.target
 
       [Service]
-      Type=oneshot
-      RemainAfterExit=yes
+      Type=simple
       WorkingDirectory=/opt/harbour
-      ExecStart=/usr/bin/docker compose up -d --build
-      ExecStop=/usr/bin/docker compose down
+      # Next.js is configured with output: standalone, so run the standalone
+      # server directly. `next start` prints a warning and is suboptimal in
+      # standalone mode. Relative paths (./public, ./.next/static) resolve
+      # from WorkingDirectory.
+      ExecStart=/usr/bin/node .next/standalone/server.js
+      Environment=NODE_ENV=production
+      Environment=PORT=3030
+      Environment=HOSTNAME=127.0.0.1
+      Environment=HARBOUR_HOME=/root/.harbour
+      Restart=on-failure
+      RestartSec=5s
+      KillMode=mixed
+      TimeoutStopSec=20
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/harbour-agent-runner.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Harbour agent runner (polls /next, spawns CLIs)
+      After=harbour.service network-online.target
+      Requires=harbour.service
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      WorkingDirectory=/opt/harbour
+      # Loop locally so one poll failure doesn't kill the service.
+      ExecStart=/bin/bash -c 'while true; do /usr/bin/node bin/harbour.mjs agent run || true; sleep 60; done'
+      Environment=HARBOUR_HOME=/root/.harbour
+      Restart=on-failure
+      RestartSec=10s
 
       [Install]
       WantedBy=multi-user.target
@@ -175,15 +207,6 @@ runcmd:
   - ufw allow 80/tcp
   - ufw allow 443/tcp
   - ufw --force enable
-
-  # --- Docker (official apt repo) ---
-  - install -m 0755 -d /etc/apt/keyrings
-  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-  - chmod a+r /etc/apt/keyrings/docker.asc
-  - bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list'
-  - apt-get update
-  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  - systemctl enable --now docker
 
   # --- Caddy (official apt repo) ---
   - curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg.key
@@ -206,15 +229,15 @@ runcmd:
   - curl -fsSL https://claude.ai/install.sh | bash
   - bash -c 'ln -sf /root/.local/bin/claude /usr/local/bin/claude 2>/dev/null || true'
 
-  # --- Clone harbour + run it ---
+  # --- Clone harbour, install deps, build, run as systemd services ---
   - git clone ${harbour_repo} /opt/harbour
   - bash -c 'cd /opt/harbour && git checkout ${harbour_ref}'
-  # The container runs as uid 1000 (node user). The bind-mounted data dir
-  # must be writable by that uid or SQLite fails to open the db file and
-  # every user-creation request returns 500.
-  - mkdir -p /opt/harbour/data && chown -R 1000:1000 /opt/harbour/data
-  - bash -c 'cd /opt/harbour && docker compose up -d --build'
-  - systemctl enable harbour.service
+  - bash -c 'cd /opt/harbour && npm ci'
+  - bash -c 'cd /opt/harbour && npm run build'
+  - mkdir -p /root/.harbour
+  - systemctl daemon-reload
+  - systemctl enable --now harbour.service
+  - systemctl enable --now harbour-agent-runner.service
 
   # --- Wait for DNS, then (re)start caddy so cert issuance succeeds ---
   - /root/harbour-bootstrap/wait-for-dns.sh

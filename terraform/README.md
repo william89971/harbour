@@ -10,9 +10,15 @@ SSH-key-only login, and automatic security updates.
 - Let's Encrypt cert auto-issued and auto-renewed by Caddy
 - Host firewall (UFW) + DigitalOcean cloud firewall: only 22/80/443 open
 - Harbour itself listens only on localhost:3030 — not reachable from the internet
-- fail2ban bans IPs after 5 failed Basic Auth attempts in 10 minutes (1 hour ban)
+- Harbour runs as a plain systemd service (`harbour.service`), not Docker —
+  simpler to update (`git pull && npm ci && npm run build && systemctl restart`)
+- Harbour agent runner runs as a sibling systemd service (`harbour-agent-runner.service`)
+  that polls every 60s and spawns the AI CLIs directly on the host
+- fail2ban bans IPs after 5 failed Basic Auth attempts in 10 minutes (1 hour ban).
+  Only real wrong-password attempts count — uncredentialed 401s (manifest.json,
+  favicons, initial page nav) are ignored so legitimate users never self-ban
 - Unattended security upgrades enabled (auto-reboots at 04:30 local if needed)
-- Node 22 + Claude Code, Codex, and Gemini CLIs installed globally
+- Node 22 + Claude Code, Codex, and Gemini CLIs installed on the host
   (you log into each once after the droplet is up — no headless auth path)
 
 ## Prerequisites
@@ -77,8 +83,16 @@ Put API keys in `/etc/profile.d/ai-keys.sh` if you want them persistent.
 ssh root@<droplet-ip>
 cd /opt/harbour
 git pull
-docker compose up -d --build
+npm ci
+npm run build
+systemctl restart harbour
+systemctl restart harbour-agent-runner
 ```
+
+Harbour runs as a plain systemd service (`npm start` under the hood), not
+Docker. Logs via `journalctl -u harbour -f`. The agent runner runs as a
+sibling service `harbour-agent-runner.service` that polls every 60s and
+spawns Claude/Codex/Gemini CLIs directly on the host.
 
 ## Rotating the Basic Auth password
 
