@@ -26,6 +26,19 @@ Agent jobs are discovered through `GET /api/agents/:id/next`. The response bundl
 
 Workflow-only jobs that have no agent are discovered through `GET /api/workflows/next`. The harbour runner polls both endpoints automatically.
 
+## Designing Your Agent Team
+
+Agents process runs one at a time. While an agent is working on a run, its other jobs wait their turn. This is deliberate — each run gets the full agent, with no risk of two CLI processes colliding on the same working directory, session state, or API budget.
+
+This shapes how you scale across multiple projects:
+
+- **Small install / one project.** One agent per role (e.g. a single `Developer`) works well. Jobs queue behind each other, which is usually fine for daily or hourly cadence.
+- **Multiple projects.** Create per-project agents — `ProjectA Developer`, `ProjectB Developer`, etc. — so work on different projects can run truly in parallel. Each one gets its own prompt, model, thinking level, and repo context. Use the **Projects** feature to filter the sidebar down to the agents and jobs for whatever you're focused on, so nine agents feels like three.
+
+Docs, env vars, and databases are top-level and can be linked to any number of jobs across agents, so duplicating agents per project mostly means duplicating prompt/model config — not your shared knowledge base.
+
+If you ever want a single agent running multiple jobs concurrently, that's a deliberate config surface we haven't added. The current design has been enough so far; the per-project pattern above is the intended answer.
+
 ## Getting Started
 
 ### With Docker (recommended)
