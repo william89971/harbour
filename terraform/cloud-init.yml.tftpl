@@ -165,16 +165,18 @@ write_files:
 
       [Service]
       Type=simple
-      WorkingDirectory=/opt/harbour
-      # Next.js is configured with output: standalone, so run the standalone
-      # server directly. `next start` prints a warning and is suboptimal in
-      # standalone mode. Relative paths (./public, ./.next/static) resolve
-      # from WorkingDirectory.
-      ExecStart=/usr/bin/node .next/standalone/server.js
+      User=harbour
+      Group=harbour
+      # Next.js is configured with output: standalone. The standalone
+      # server.js only resolves ./public and ./.next/static relative to
+      # its own directory - so we cd into .next/standalone/ after the
+      # build step copies those files alongside it.
+      WorkingDirectory=/opt/harbour/.next/standalone
+      ExecStart=/usr/bin/node server.js
       Environment=NODE_ENV=production
       Environment=PORT=3030
       Environment=HOSTNAME=127.0.0.1
-      Environment=HARBOUR_HOME=/root/.harbour
+      Environment=HARBOUR_HOME=/home/harbour/.harbour
       Restart=on-failure
       RestartSec=5s
       KillMode=mixed
@@ -189,15 +191,20 @@ write_files:
       [Unit]
       Description=Harbour agent runner (polls /next, spawns CLIs)
       After=harbour.service network-online.target
-      Requires=harbour.service
-      Wants=network-online.target
+      # Wants (not Requires) so a harbour restart doesn't stop the runner.
+      Wants=harbour.service network-online.target
 
       [Service]
       Type=simple
+      User=harbour
+      Group=harbour
       WorkingDirectory=/opt/harbour
       # Loop locally so one poll failure doesn't kill the service.
       ExecStart=/bin/bash -c 'while true; do /usr/bin/node bin/harbour.mjs agent run || true; sleep 60; done'
-      Environment=HARBOUR_HOME=/root/.harbour
+      Environment=HARBOUR_HOME=/home/harbour/.harbour
+      # Explicit PATH so the service session finds the CLIs installed under
+      # the harbour user's home (claude installer puts itself in ~/.local/bin).
+      Environment=PATH=/home/harbour/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       Restart=on-failure
       RestartSec=10s
 
@@ -230,19 +237,33 @@ runcmd:
   - /root/harbour-bootstrap/render-caddyfile.sh
   - caddy validate --config /etc/caddy/Caddyfile
 
-  # --- Node 22 (NodeSource) + three AI CLIs ---
+  # --- Node 22 (NodeSource) ---
   - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   - apt-get install -y nodejs
+
+  # --- Create dedicated harbour user ---
+  # Claude Code refuses --dangerously-skip-permissions when running as root
+  # (the runner always passes this flag), so both services run under an
+  # unprivileged user. All AI CLI auth state lives in /home/harbour/ and
+  # persists across service restarts.
+  - useradd -m -s /bin/bash harbour
   - npm install -g @openai/codex @google/gemini-cli
-  - curl -fsSL https://claude.ai/install.sh | bash
-  - bash -c 'ln -sf /root/.local/bin/claude /usr/local/bin/claude 2>/dev/null || true'
+  # claude is installed as the harbour user into their home; the user auths
+  # it interactively over SSH after bootstrap finishes.
+  - su - harbour -c 'curl -fsSL https://claude.ai/install.sh | bash'
 
   # --- Clone harbour, install deps, build, run as systemd services ---
   - git clone ${harbour_repo} /opt/harbour
   - bash -c 'cd /opt/harbour && git checkout ${harbour_ref}'
   - bash -c 'cd /opt/harbour && npm ci'
   - bash -c 'cd /opt/harbour && npm run build'
-  - mkdir -p /root/.harbour
+  # Next.js standalone output: server.js in .next/standalone/ expects public
+  # and .next/static as siblings of itself. `next build` doesn't put them
+  # there - we copy them explicitly. Matches what the Dockerfile does.
+  - bash -c 'cp -r /opt/harbour/public /opt/harbour/.next/standalone/'
+  - bash -c 'cp -r /opt/harbour/.next/static /opt/harbour/.next/standalone/.next/'
+  - chown -R harbour:harbour /opt/harbour
+  - mkdir -p /home/harbour/.harbour && chown harbour:harbour /home/harbour/.harbour
   - systemctl daemon-reload
   - systemctl enable --now harbour.service
   - systemctl enable --now harbour-agent-runner.service

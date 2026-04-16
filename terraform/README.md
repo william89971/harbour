@@ -66,16 +66,25 @@ Terraform outputs the droplet IP. Now:
 ## Log into the AI CLIs
 
 The CLIs don't have a clean headless auth path, so you run each once
-interactively over SSH:
+interactively over SSH. The runner runs as the `harbour` user (not root),
+so auth each CLI under that user — auth state lives in `/home/harbour/`
+and persists across restarts.
 
 ```bash
 ssh root@<droplet-ip>
-claude   # OAuth browser flow — or: export ANTHROPIC_API_KEY=...
-codex    # OAuth browser flow — or: export OPENAI_API_KEY=...
-gemini   # OAuth browser flow — or: export GEMINI_API_KEY=...
+su - harbour
+claude   # OAuth device-code flow — or: export ANTHROPIC_API_KEY=...
+codex    # Browser sign-in — or: export OPENAI_API_KEY=...
+gemini   # OAuth device-code flow — or: export GEMINI_API_KEY=...
+exit
+# then, if the runner was already started before the CLI was authed:
+systemctl restart harbour-agent-runner
 ```
 
-Put API keys in `/etc/profile.d/ai-keys.sh` if you want them persistent.
+For API-key mode, put them in `/home/harbour/.bashrc` (so the systemd
+service session picks them up via `su -c` if needed) or in the runner's
+systemd drop-in (`systemctl edit harbour-agent-runner`, add
+`[Service]\nEnvironment=ANTHROPIC_API_KEY=...`).
 
 ## Updating Harbour
 
