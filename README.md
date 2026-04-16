@@ -80,6 +80,10 @@ npm start
 
 Visit [http://localhost:3000](http://localhost:3000) and create your first account.
 
+### Deploy to DigitalOcean
+
+Terraform config for a single-droplet deployment (Ubuntu + Caddy + Let's Encrypt + HTTP Basic Auth, running Harbour directly as a systemd service) lives in [`terraform/`](terraform/README.md). One `terraform apply` spins up a production-ready box in ~5 minutes.
+
 ### Updating
 
 When Harbour is running under launchd on macOS, rebuilding in place leaves the running server referencing chunks that get replaced mid-build — pages render unstyled until the server restarts. Use the release script to rebuild and bounce the whole local stack:
