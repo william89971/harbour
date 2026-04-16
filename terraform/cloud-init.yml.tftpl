@@ -21,6 +21,13 @@ packages:
   - debian-keyring
   - debian-archive-keyring
   - apt-transport-https
+  # Python + venv + pip + pipx are pre-installed so the harbour user can
+  # run python-based agent tooling without bootstrap. Ubuntu 24.04 enforces
+  # PEP 668 (externally-managed-environment) - use `python3 -m venv .venv`
+  # for project-local installs, or `pipx install <tool>` for global CLIs.
+  - python3-pip
+  - python3-venv
+  - pipx
 
 write_files:
   - path: /etc/ssh/sshd_config.d/99-harbour-hardening.conf
