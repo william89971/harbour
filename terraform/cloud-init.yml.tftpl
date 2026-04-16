@@ -99,7 +99,12 @@ write_files:
     permissions: "0644"
     content: |
       [Definition]
-      failregex = ^\s*\{.*"remote_ip":"<HOST>".*"status":401.*\}\s*$
+      # Only count 401s where an Authorization header was actually sent.
+      # Caddy logs a present-but-redacted value as `"Authorization":["REDACTED"]`.
+      # Matching on this avoids false positives from browsers fetching
+      # sub-resources (manifest.json, favicon, initial page nav) uncredentialed,
+      # which would otherwise self-ban legitimate users on first visit.
+      failregex = ^.*"remote_ip":"<HOST>".*"Authorization":\["REDACTED"\].*"status":401.*$
       ignoreregex =
 
   - path: /etc/fail2ban/jail.d/caddy-auth.local
@@ -204,6 +209,10 @@ runcmd:
   # --- Clone harbour + run it ---
   - git clone ${harbour_repo} /opt/harbour
   - bash -c 'cd /opt/harbour && git checkout ${harbour_ref}'
+  # The container runs as uid 1000 (node user). The bind-mounted data dir
+  # must be writable by that uid or SQLite fails to open the db file and
+  # every user-creation request returns 500.
+  - mkdir -p /opt/harbour/data && chown -R 1000:1000 /opt/harbour/data
   - bash -c 'cd /opt/harbour && docker compose up -d --build'
   - systemctl enable harbour.service
 
