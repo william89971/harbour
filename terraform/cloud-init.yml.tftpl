@@ -112,11 +112,19 @@ write_files:
   - path: /etc/fail2ban/jail.d/caddy-auth.local
     permissions: "0644"
     content: |
+      # maxretry is 20, not 5. Rationale: a single browser page load with
+      # a wrong stored Basic Auth password (e.g. Safari auto-replaying a
+      # stale cred) sends Authorization on every sub-resource request -
+      # manifest, favicon, icons, api/auth/me, etc. With maxretry=5 one
+      # human mistake instantly self-bans. 20 still stops credential
+      # stuffing at human speed; a real brute force would just rotate IPs
+      # anyway. To whitelist your own IP during setup, add
+      # "ignoreip = 127.0.0.1/8 ::1 <your-ip>" below.
       [caddy-auth]
       enabled = true
       filter = caddy-auth
       logpath = /var/log/caddy/access.log
-      maxretry = 5
+      maxretry = 20
       findtime = 600
       bantime = 3600
       backend = auto
