@@ -1,0 +1,227 @@
+#cloud-config
+# Harbour droplet bootstrap. Installs docker, caddy (HTTPS + Basic Auth),
+# fail2ban, ufw, security updates, node 22, three AI CLIs, and runs harbour.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - git
+  - dnsutils
+  - ufw
+  - fail2ban
+  - unattended-upgrades
+  - apache2-utils
+  - jq
+  - debian-keyring
+  - debian-archive-keyring
+  - apt-transport-https
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-harbour-hardening.conf
+    permissions: "0644"
+    content: |
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      UsePAM yes
+      X11Forwarding no
+
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+
+  - path: /etc/apt/apt.conf.d/50unattended-upgrades-harbour
+    permissions: "0644"
+    content: |
+      Unattended-Upgrade::Allowed-Origins {
+        "$${distro_id}:$${distro_codename}";
+        "$${distro_id}:$${distro_codename}-security";
+        "$${distro_id}ESMApps:$${distro_codename}-apps-security";
+        "$${distro_id}ESM:$${distro_codename}-infra-security";
+      };
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+
+  - path: /root/harbour-bootstrap/render-caddyfile.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      HASH=$(caddy hash-password --plaintext "${basic_auth_password}")
+      cat > /etc/caddy/Caddyfile <<CADDYEOF
+      {
+        email ${letsencrypt_email}
+      }
+
+      ${domain} {
+        encode zstd gzip
+
+        header {
+          Strict-Transport-Security "max-age=31536000; includeSubDomains"
+          X-Content-Type-Options "nosniff"
+          X-Frame-Options "SAMEORIGIN"
+          Referrer-Policy "strict-origin-when-cross-origin"
+          -Server
+        }
+
+        basic_auth {
+          ${basic_auth_user} $HASH
+        }
+
+        reverse_proxy localhost:3030 {
+          header_up Host {host}
+          header_up X-Real-IP {remote_host}
+          header_up X-Forwarded-For {remote_host}
+          header_up X-Forwarded-Proto {scheme}
+        }
+
+        log {
+          output file /var/log/caddy/access.log {
+            roll_size 50mb
+            roll_keep 5
+          }
+          format json
+        }
+      }
+      CADDYEOF
+      chown root:root /etc/caddy/Caddyfile
+      chmod 0644 /etc/caddy/Caddyfile
+
+  - path: /etc/fail2ban/filter.d/caddy-auth.conf
+    permissions: "0644"
+    content: |
+      [Definition]
+      failregex = ^\s*\{.*"remote_ip":"<HOST>".*"status":401.*\}\s*$
+      ignoreregex =
+
+  - path: /etc/fail2ban/jail.d/caddy-auth.local
+    permissions: "0644"
+    content: |
+      [caddy-auth]
+      enabled = true
+      filter = caddy-auth
+      logpath = /var/log/caddy/access.log
+      maxretry = 5
+      findtime = 600
+      bantime = 3600
+      backend = auto
+
+  - path: /root/harbour-bootstrap/wait-for-dns.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # Wait up to 20 minutes for ${domain} to resolve to this droplet's IP.
+      # Caddy starts regardless -- it will retry cert issuance on its own.
+      set -u
+      DOMAIN="${domain}"
+      MY_IP="$(curl -fsS --max-time 10 https://api.ipify.org || true)"
+      if [ -z "$MY_IP" ]; then
+        echo "wait-for-dns: could not determine public IP; skipping wait"
+        exit 0
+      fi
+      echo "wait-for-dns: my IP is $MY_IP, waiting for $DOMAIN to resolve here..."
+      for i in $(seq 1 40); do
+        resolved="$(dig +short +time=5 +tries=1 "$DOMAIN" @1.1.1.1 | tail -1)"
+        if [ "$resolved" = "$MY_IP" ]; then
+          echo "wait-for-dns: $DOMAIN resolves to $MY_IP (attempt $i)"
+          exit 0
+        fi
+        echo "wait-for-dns: attempt $i -- resolved='$resolved' expected='$MY_IP'"
+        sleep 30
+      done
+      echo "wait-for-dns: timed out after 20 minutes; continuing anyway"
+      exit 0
+
+  - path: /etc/systemd/system/harbour.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Harbour (docker compose)
+      Requires=docker.service
+      After=docker.service network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=/opt/harbour
+      ExecStart=/usr/bin/docker compose up -d --build
+      ExecStop=/usr/bin/docker compose down
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # --- SSH hardening ---
+  - [systemctl, restart, ssh]
+
+  # --- UFW (firewall at host level, in addition to DO cloud firewall) ---
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+
+  # --- Docker (official apt repo) ---
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - bash -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list'
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable --now docker
+
+  # --- Caddy (official apt repo) ---
+  - curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg.key
+  - gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg /usr/share/keyrings/caddy-stable-archive-keyring.gpg.key
+  - bash -c 'echo "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" > /etc/apt/sources.list.d/caddy-stable.list'
+  - bash -c 'echo "deb-src [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" >> /etc/apt/sources.list.d/caddy-stable.list'
+  - apt-get update
+  - apt-get install -y caddy
+  - mkdir -p /var/log/caddy
+  - chown -R caddy:caddy /var/log/caddy
+
+  # --- Basic auth hash (bcrypt) + Caddyfile install ---
+  - /root/harbour-bootstrap/render-caddyfile.sh
+  - caddy validate --config /etc/caddy/Caddyfile
+
+  # --- Node 22 (NodeSource) + three AI CLIs ---
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  - apt-get install -y nodejs
+  - npm install -g @openai/codex @google/gemini-cli
+  - curl -fsSL https://claude.ai/install.sh | bash
+  - bash -c 'ln -sf /root/.local/bin/claude /usr/local/bin/claude 2>/dev/null || true'
+
+  # --- Clone harbour + run it ---
+  - git clone ${harbour_repo} /opt/harbour
+  - bash -c 'cd /opt/harbour && git checkout ${harbour_ref}'
+  - bash -c 'cd /opt/harbour && docker compose up -d --build'
+  - systemctl enable harbour.service
+
+  # --- Wait for DNS, then (re)start caddy so cert issuance succeeds ---
+  - /root/harbour-bootstrap/wait-for-dns.sh
+  # caddy validate (run as root earlier) may have created access.log owned by root;
+  # ensure everything under /var/log/caddy is owned by the caddy user before start.
+  - chown -R caddy:caddy /var/log/caddy
+  - systemctl enable --now caddy
+  - systemctl restart caddy
+
+  # --- fail2ban ---
+  - systemctl enable --now fail2ban
+  - systemctl restart fail2ban
+
+  # --- unattended-upgrades ---
+  - systemctl enable --now unattended-upgrades
+
+  - echo "HARBOUR READY -- https://${domain}"
+
+final_message: "Harbour droplet bootstrap complete after $UPTIME seconds."
