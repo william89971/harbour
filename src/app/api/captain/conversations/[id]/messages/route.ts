@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { withUserAuth } from "@/lib/auth";
-import { getConversation, createMessage, deleteCaptainOutput } from "@/lib/db/captain";
+import { getConversation, createMessage } from "@/lib/db/captain";
 import { isRunning, spawn } from "@/lib/captain/process-manager";
 
 export const POST = withUserAuth(async (req, auth, { params }) => {
@@ -29,9 +29,6 @@ export const POST = withUserAuth(async (req, auth, { params }) => {
 
   // Create placeholder assistant message
   const assistantMessage = createMessage(id, "assistant", "");
-
-  // Clear old output events for this conversation (keep only current response)
-  deleteCaptainOutput(id);
 
   // Determine session state
   const isNewSession = !conversation.session_id;

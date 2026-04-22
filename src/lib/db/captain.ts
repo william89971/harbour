@@ -161,14 +161,31 @@ export function addCaptainOutput(
 
 export function listCaptainOutput(
   conversationId: string,
-  afterId: number = 0
+  afterId: number = 0,
+  messageId?: string
 ): CaptainOutputEvent[] {
   const db = getDb();
+  if (messageId) {
+    return db
+      .prepare(
+        `SELECT * FROM captain_output WHERE conversation_id = ? AND message_id = ? AND id > ? ORDER BY id ASC`
+      )
+      .all(conversationId, messageId, afterId) as CaptainOutputEvent[];
+  }
   return db
     .prepare(
       `SELECT * FROM captain_output WHERE conversation_id = ? AND id > ? ORDER BY id ASC`
     )
     .all(conversationId, afterId) as CaptainOutputEvent[];
+}
+
+export function listToolEventsByMessage(messageId: string): CaptainOutputEvent[] {
+  const db = getDb();
+  return db
+    .prepare(
+      `SELECT * FROM captain_output WHERE message_id = ? AND event_type IN ('tool_start', 'tool_end') ORDER BY id ASC`
+    )
+    .all(messageId) as CaptainOutputEvent[];
 }
 
 export function deleteCaptainOutput(conversationId: string) {

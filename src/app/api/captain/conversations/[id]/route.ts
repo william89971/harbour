@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withUserAuth } from "@/lib/auth";
-import { getConversation, updateConversation, deleteConversation, listMessages } from "@/lib/db/captain";
+import { getConversation, updateConversation, deleteConversation, listMessages, listToolEventsByMessage } from "@/lib/db/captain";
 import { stop as stopProcess } from "@/lib/captain/process-manager";
 
 export const GET = withUserAuth(async (_req, auth, { params }) => {
@@ -9,7 +9,13 @@ export const GET = withUserAuth(async (_req, auth, { params }) => {
   if (!conversation || conversation.user_id !== auth.userId) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  const messages = listMessages(id);
+  const messages = listMessages(id).map((msg) => {
+    if (msg.role === "assistant") {
+      const toolEvents = listToolEventsByMessage(msg.id);
+      return { ...msg, toolEvents };
+    }
+    return { ...msg, toolEvents: [] };
+  });
   return NextResponse.json({ ...conversation, messages });
 });
 

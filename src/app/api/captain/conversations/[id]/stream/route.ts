@@ -13,6 +13,7 @@ export const GET = withUserAuth(async (req, auth, { params }) => {
 
   const encoder = new TextEncoder();
   let lastId = parseInt(req.nextUrl.searchParams.get("after") || "0", 10);
+  const messageId = req.nextUrl.searchParams.get("messageId") || undefined;
   let closed = false;
 
   const stream = new ReadableStream({
@@ -31,7 +32,7 @@ export const GET = withUserAuth(async (req, auth, { params }) => {
       const poll = () => {
         if (closed) return;
         try {
-          const events = listCaptainOutput(id, lastId);
+          const events = listCaptainOutput(id, lastId, messageId);
           for (const evt of events) {
             send("output", evt);
             if (evt.id > lastId) lastId = evt.id;
@@ -40,7 +41,7 @@ export const GET = withUserAuth(async (req, auth, { params }) => {
           // If process is no longer running, flush and close
           if (!isRunning(id)) {
             // One final poll to catch any remaining events
-            const remaining = listCaptainOutput(id, lastId);
+            const remaining = listCaptainOutput(id, lastId, messageId);
             for (const evt of remaining) {
               send("output", evt);
             }

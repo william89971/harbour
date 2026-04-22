@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { StreamingOutput } from "@/components/app/captain-message";
+import { StreamingOutput, ToolCallList } from "@/components/app/captain-message";
 import {
   MessageSquare,
   Plus,
@@ -39,6 +39,7 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   created_at: number;
+  toolEvents: OutputEvent[];
 };
 
 type OutputEvent = {
@@ -137,12 +138,14 @@ function ChatView({
   });
 
   const connectStream = useCallback(
-    () => {
+    (msgId?: string) => {
       eventSourceRef.current?.close();
       setStreamEvents([]);
 
+      const params = new URLSearchParams({ after: "0" });
+      if (msgId) params.set("messageId", msgId);
       const evtSource = new EventSource(
-        `/api/captain/conversations/${conversationId}/stream?after=0`
+        `/api/captain/conversations/${conversationId}/stream?${params}`
       );
       eventSourceRef.current = evtSource;
 
@@ -190,7 +193,7 @@ function ChatView({
         if (data.running && data.activeMessageId) {
           setStreaming(true);
           setActiveMessageId(data.activeMessageId);
-          connectStream();
+          connectStream(data.activeMessageId);
         }
       } catch { /* ignore */ }
     }
@@ -244,7 +247,7 @@ function ChatView({
         queryKey: ["captain-conversation", conversationId],
       });
       // Connect to stream
-      connectStream();
+      connectStream(data.messageId);
     },
   });
 
@@ -307,8 +310,11 @@ function ChatView({
                   {msg.role === "user" ? (
                     <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                   ) : (
-                    <div className="prose prose-sm dark:prose-invert max-w-none text-sm">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    <div className="text-sm">
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                      </div>
+                      <ToolCallList toolEvents={msg.toolEvents} />
                     </div>
                   )}
                 </div>
