@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDown, ChevronRight, Loader2, Check, Wrench } from "lucide-react";
@@ -11,6 +11,62 @@ type OutputEvent = {
   content: string | null;
   tool_name: string | null;
 };
+
+// ── Thinking messages ───────────────────────────────────────────────────
+
+const THINKING_MESSAGES = [
+  "Charting a course...",
+  "Raising the anchor...",
+  "Checking the compass...",
+  "Scanning the horizon...",
+  "Reading the star charts...",
+  "Adjusting the sails...",
+  "Consulting the logbook...",
+  "Plotting coordinates...",
+  "Hoisting the mainsail...",
+  "Navigating the channels...",
+  "Sounding the depths...",
+  "Catching the trade winds...",
+  "Tying the bowline...",
+  "Signaling the fleet...",
+  "Loading the cargo hold...",
+  "Swabbing the quarterdeck...",
+  "Trimming the jib...",
+  "Battening the hatches...",
+  "Setting the watch...",
+  "Unfurling the charts...",
+  "Polishing the spyglass...",
+  "Calibrating instruments...",
+  "Logging the voyage...",
+  "Rigging the topgallant...",
+  "Reading the tides...",
+  "Stowing the provisions...",
+  "Manning the helm...",
+  "Splicing the mainbrace...",
+  "Weighing anchor...",
+  "Lashing the capstan...",
+];
+
+function useThinkingMessage() {
+  const [index, setIndex] = useState(() => Math.floor(Math.random() * THINKING_MESSAGES.length));
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setIndex((prev) => (prev + 1) % THINKING_MESSAGES.length);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, []);
+  return THINKING_MESSAGES[index];
+}
+
+function ThinkingIndicator() {
+  const message = useThinkingMessage();
+  return (
+    <div className="flex items-center gap-2 text-muted-foreground">
+      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      <span>{message}</span>
+    </div>
+  );
+}
 
 // ── Single tool block ──────────────────────────────────────────────────
 
@@ -185,10 +241,7 @@ export function StreamingOutput({
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{textContent}</ReactMarkdown>
         </div>
       ) : streaming ? (
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          <span>Thinking...</span>
-        </div>
+        <ThinkingIndicator />
       ) : null}
 
       {/* Errors only — info/result are noise in chat context */}

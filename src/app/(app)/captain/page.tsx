@@ -297,7 +297,7 @@ function ChatView({
             }
 
             return (
-              <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "" : ""}`}>
+              <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "rounded-lg bg-muted/50 px-3 py-2.5" : ""}`}>
                 <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
                   msg.role === "user"
                     ? "bg-primary/10 text-primary"
