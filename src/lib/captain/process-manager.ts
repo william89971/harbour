@@ -7,6 +7,7 @@
 
 import path from "path";
 import { getProvider, runCliTool, type CliEvent } from "./providers";
+import { setupWorkspace } from "./workspace";
 import {
   addCaptainOutput,
   updateMessageContent,
@@ -72,6 +73,7 @@ export async function spawn(opts: {
   const defaultCwd = path.join(harbourHome(), "captain");
   const cwd = opts.cwd || defaultCwd;
   ensureDir(cwd);
+  setupWorkspace(cwd);
 
   // Build CLI command
   const cmd = provider.buildCommand(
