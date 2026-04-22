@@ -116,7 +116,7 @@ function ChatView({
   const [streaming, setStreaming] = useState(false);
   const [streamEvents, setStreamEvents] = useState<OutputEvent[]>([]);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const isFirstMessageRef = useRef(false);
@@ -208,9 +208,10 @@ function ChatView({
     };
   }, [conversationId]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom — use scrollTop on the container to avoid scrolling parent elements
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [conversation?.messages, streamEvents]);
 
   // Send message
@@ -272,9 +273,9 @@ function ChatView({
   const messages = conversation?.messages || [];
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0">
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto min-h-0 px-4 py-4">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto min-h-0 px-4 py-4">
         {messages.length === 0 && !streaming && (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <MessageSquare className="h-10 w-10 text-muted-foreground/30 mb-3" />
@@ -333,7 +334,6 @@ function ChatView({
             </div>
           )}
 
-          <div ref={messagesEndRef} />
         </div>
       </div>
 
@@ -434,7 +434,7 @@ export default function CaptainPage() {
   }
 
   return (
-    <div className="-mx-4 -mt-4 md:-mx-8 md:-mt-8 flex h-[calc(100dvh-3.5rem)] md:h-[calc(100dvh)]">
+    <div className="-mx-4 -mb-6 md:-mx-8 md:-mb-8 -mt-[calc(4.5rem+env(safe-area-inset-top))] md:-mt-8 flex h-[calc(100dvh-7rem)] md:h-[calc(100dvh)] overflow-hidden">
       {/* Conversation sidebar — desktop */}
       {sidebarOpen && (
         <div className="hidden md:flex w-64 shrink-0 border-r flex-col bg-card">
