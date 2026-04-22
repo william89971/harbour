@@ -10,7 +10,6 @@ import {
   Plus,
   Send,
   Square,
-  Loader2,
   PanelLeftOpen,
   PanelLeftClose,
   Trash2,
@@ -323,25 +322,13 @@ function ChatView({
           })}
 
           {/* Streaming response */}
-          {streaming && streamEvents.length > 0 && (
+          {streaming && (
             <div className="flex gap-3">
               <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
                 <Bot className="h-3.5 w-3.5" />
               </div>
               <div className="flex-1 min-w-0 pt-0.5">
                 <StreamingOutput events={streamEvents} streaming={true} />
-              </div>
-            </div>
-          )}
-
-          {/* Streaming but no events yet — show loading */}
-          {streaming && streamEvents.length === 0 && (
-            <div className="flex gap-3">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                <Bot className="h-3.5 w-3.5" />
-              </div>
-              <div className="flex-1 min-w-0 pt-1">
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
             </div>
           )}

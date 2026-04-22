@@ -179,12 +179,17 @@ export function StreamingOutput({
 
   return (
     <div className="text-sm">
-      {/* Text content rendered as markdown */}
-      {textContent && (
+      {/* Text content or thinking indicator */}
+      {textContent ? (
         <div className="prose prose-sm dark:prose-invert max-w-none">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{textContent}</ReactMarkdown>
         </div>
-      )}
+      ) : streaming ? (
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <span>Thinking...</span>
+        </div>
+      ) : null}
 
       {/* Errors only — info/result are noise in chat context */}
       {errorEvents.map((evt) => (
