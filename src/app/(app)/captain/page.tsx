@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { StreamingOutput, ToolCallList } from "@/components/app/captain-message";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import {
   MessageSquare,
   Plus,
@@ -16,6 +17,7 @@ import {
   User,
   Bot,
   Settings,
+  List,
 } from "lucide-react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -381,6 +383,7 @@ export default function CaptainPage() {
   const queryClient = useQueryClient();
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mobileListOpen, setMobileListOpen] = useState(false);
 
   // Fetch conversations
   const { data: conversations = [] } = useQuery<Conversation[]>({
@@ -434,7 +437,7 @@ export default function CaptainPage() {
   }
 
   return (
-    <div className="-mx-4 -mb-6 md:-mx-8 md:-mb-8 -mt-[calc(4.5rem+env(safe-area-inset-top))] md:-mt-8 flex h-[calc(100dvh-7rem)] md:h-[calc(100dvh)] overflow-hidden">
+    <div className="-mx-4 -mb-6 md:-mx-8 md:-mb-8 md:-mt-8 flex h-[calc(100dvh-4.5rem-env(safe-area-inset-top)-3.5rem)] md:h-[calc(100dvh)] overflow-hidden">
       {/* Conversation sidebar — desktop */}
       {sidebarOpen && (
         <div className="hidden md:flex w-64 shrink-0 border-r flex-col bg-card">
@@ -460,7 +463,18 @@ export default function CaptainPage() {
           >
             {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
           </Button>
-          {/* Mobile: new chat + conversation name */}
+          {/* Mobile: conversation list + new chat */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden h-8 w-8"
+            onClick={() => setMobileListOpen(true)}
+          >
+            <List className="h-4 w-4" />
+          </Button>
+          <span className="text-sm font-medium truncate flex-1">
+            {conversations.find((c) => c.id === effectiveConversationId)?.title || "Captain"}
+          </span>
           <Button
             variant="ghost"
             size="icon"
@@ -469,9 +483,6 @@ export default function CaptainPage() {
           >
             <Plus className="h-4 w-4" />
           </Button>
-          <span className="text-sm font-medium truncate flex-1">
-            {conversations.find((c) => c.id === effectiveConversationId)?.title || "Captain"}
-          </span>
           <Link href="/settings" className="text-muted-foreground hover:text-foreground">
             <Settings className="h-4 w-4" />
           </Link>
@@ -501,6 +512,25 @@ export default function CaptainPage() {
           </div>
         )}
       </div>
+
+      {/* Mobile conversation list sheet */}
+      <Sheet open={mobileListOpen} onOpenChange={setMobileListOpen}>
+        <SheetContent side="left" className="w-72 p-0">
+          <ConversationList
+            conversations={conversations}
+            activeId={effectiveConversationId}
+            onSelect={(id) => {
+              setActiveConversationId(id);
+              setMobileListOpen(false);
+            }}
+            onNew={() => {
+              handleNew();
+              setMobileListOpen(false);
+            }}
+            onDelete={handleDelete}
+          />
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
