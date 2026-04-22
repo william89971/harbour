@@ -289,6 +289,38 @@ export function initializeSchema(db: Database.Database) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    -- Captain: real-time chat conversations with CLI tools
+    CREATE TABLE IF NOT EXISTS captain_conversations (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      cli TEXT NOT NULL,
+      model TEXT,
+      thinking TEXT,
+      session_id TEXT,
+      cwd TEXT,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS captain_messages (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL REFERENCES captain_conversations(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+      content TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS captain_output (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      conversation_id TEXT NOT NULL REFERENCES captain_conversations(id) ON DELETE CASCADE,
+      message_id TEXT REFERENCES captain_messages(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      content TEXT,
+      tool_name TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_attachment_processing_attachment ON attachment_processing(attachment_id);
     CREATE INDEX IF NOT EXISTS idx_attachment_processing_run ON attachment_processing(run_id);
@@ -306,6 +338,10 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_database_migrations_db ON database_migrations(database_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
     CREATE INDEX IF NOT EXISTS idx_run_activity_run_time ON run_activity(run_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_captain_conversations_user ON captain_conversations(user_id);
+    CREATE INDEX IF NOT EXISTS idx_captain_messages_conversation ON captain_messages(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_captain_output_conversation ON captain_output(conversation_id);
   `);
 
   // Migrations: drop agent_id from docs (now top-level)

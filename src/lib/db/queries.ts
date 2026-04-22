@@ -10,3 +10,4 @@ export * from "./projects";
 export * from "./admin-api-keys";
 export * from "./attachments";
 export * from "./video-processing";
+export * from "./captain";

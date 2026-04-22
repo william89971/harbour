@@ -9,6 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Trash2, Plus, Copy, Check } from "lucide-react";
 import { useApp } from "@/components/app/app-context";
 import { useRouter } from "next/navigation";
+import { CLI_CONFIG } from "@/lib/cli-config";
+import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
 
 type Settings = Record<string, string>;
 
@@ -359,6 +361,59 @@ export default function SettingsPage() {
               if (v > 0) updateSetting("recent_runs_limit", String(v));
             }}
           />
+        </div>
+
+        {/* Captain */}
+        <div className="rounded-lg border p-4 space-y-4">
+          <div>
+            <Label className="text-base font-medium">Captain</Label>
+            <p className="text-xs text-muted-foreground mt-0.5">Chat with a CLI tool directly from the dashboard.</p>
+          </div>
+          <div className="space-y-2">
+            <Label>CLI Tool</Label>
+            <select
+              value={settings?.captain_cli || "claude"}
+              onChange={e => updateSetting("captain_cli", e.target.value)}
+              className={SELECT_CLASS}
+            >
+              {Object.keys(CLI_CONFIG).map(cli => (
+                <option key={cli} value={cli}>{cli.charAt(0).toUpperCase() + cli.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+          <ModelThinkingSelect
+            cli={settings?.captain_cli || "claude"}
+            model={settings?.captain_model || ""}
+            thinking={settings?.captain_thinking || ""}
+            onModelChange={v => updateSetting("captain_model", v)}
+            onThinkingChange={v => updateSetting("captain_thinking", v)}
+            defaultModelLabel="Default"
+            defaultThinkingLabel="Default"
+          />
+          <div className="space-y-2">
+            <Label>Working Directory</Label>
+            <p className="text-xs text-muted-foreground mt-0.5">Where the CLI tool runs. Point this at a project repo for file access.</p>
+            <Input
+              placeholder="~/.harbour/captain"
+              className="font-mono text-sm"
+              value={settings?.captain_cwd || ""}
+              onChange={e => {
+                const v = e.target.value;
+                if (!v.trim()) {
+                  updateSetting("captain_cwd", "");
+                }
+              }}
+              onBlur={e => {
+                const v = e.target.value.trim();
+                updateSetting("captain_cwd", v);
+              }}
+              onKeyDown={e => {
+                if (e.key === "Enter") {
+                  updateSetting("captain_cwd", (e.target as HTMLInputElement).value.trim());
+                }
+              }}
+            />
+          </div>
         </div>
 
         {/* Video Processing */}

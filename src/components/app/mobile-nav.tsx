@@ -16,6 +16,7 @@ import {
   Users,
   Settings,
   MoreHorizontal,
+  MessageSquare,
 } from "lucide-react";
 
 export function MobileBottomNav() {
@@ -25,6 +26,7 @@ export function MobileBottomNav() {
   const router = useRouter();
 
   const tabs = [
+    { href: "/captain", label: "Captain", icon: MessageSquare, match: (p: string) => p.startsWith("/captain") },
     { href: "/", label: "Runs", icon: Activity, badge: waitingCount, match: (p: string) => p === "/" || p.startsWith("/runs") },
     { href: "/jobs", label: "Jobs", icon: Briefcase, match: (p: string) => p.startsWith("/jobs") },
     { href: "/agents", label: "Agents", icon: Bot, match: (p: string) => p.startsWith("/agents") },

@@ -12,6 +12,7 @@ import {
   KeyRound,
   Users,
   Settings,
+  MessageSquare,
 } from "lucide-react";
 
 export function NavLinks({ onClick }: { onClick?: () => void }) {
@@ -19,6 +20,7 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
   const { waitingCount } = useApp();
 
   const links = [
+    { href: "/captain", label: "Captain", icon: MessageSquare },
     { href: "/", label: "Runs", icon: Activity, badge: waitingCount },
     { href: "/jobs", label: "Jobs", icon: Briefcase },
     { href: "/agents", label: "Agents", icon: Bot },
