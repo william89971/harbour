@@ -81,6 +81,12 @@ const PROVIDERS = {
     createParser() {
       // Track in-flight tool_use blocks: index → { toolName, inputJson }
       const activeBlocks = new Map();
+      // The Anthropic stream protocol emits no separator between distinct text
+      // content blocks (common when text is interleaved with tool_use). Naive
+      // concatenation produces "first sentence.second sentence." — inject a
+      // paragraph break at the start of each new text block after the first.
+      let hasEmittedText = false;
+      let needsLeadingBreak = false;
 
       return {
         parseLine(line) {
@@ -97,7 +103,13 @@ const PROVIDERS = {
               const evt = obj.event;
               if (evt.type === "content_block_delta") {
                 if (evt.delta?.type === "text_delta" && evt.delta.text) {
-                  events.push({ event_type: "text_delta", content: evt.delta.text });
+                  let text = evt.delta.text;
+                  if (needsLeadingBreak) {
+                    text = "\n\n" + text;
+                    needsLeadingBreak = false;
+                  }
+                  events.push({ event_type: "text_delta", content: text });
+                  hasEmittedText = true;
                 }
                 if (evt.delta?.type === "thinking_delta" && evt.delta.thinking) {
                   events.push({ event_type: "thinking", content: evt.delta.thinking });
@@ -114,6 +126,10 @@ const PROVIDERS = {
                   toolName: evt.content_block.name,
                   inputJson: "",
                 });
+              }
+              // New text block after we've already emitted text → mark a paragraph break
+              if (evt.type === "content_block_start" && evt.content_block?.type === "text") {
+                if (hasEmittedText) needsLeadingBreak = true;
               }
               // Input fully assembled — emit tool_start with content
               if (evt.type === "content_block_stop") {
