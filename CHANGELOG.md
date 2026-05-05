@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.14.0 — 2026-05-05
+
+### Captain
+
+- New **Captain** dashboard page — an in-browser chat with a CLI tool (Claude Code, Codex, or Gemini CLI) that runs server-side and streams output back over SSE. Lets you ask questions, inspect runs, query the database, and manage Harbour conversationally without leaving the UI.
+- Multi-conversation support with session continuity per conversation. Stop/cancel a running response mid-stream; old conversations are preserved and resumable.
+- Tool calls render as collapsible blocks inline with the assistant's text, separate from the prose. Markdown rendering with paragraph breaks preserved between text blocks (Anthropic's stream emits no separator between text content blocks within a turn — Captain injects one).
+- Rotating nautical-themed thinking messages while waiting on the model; spinner is replaced by streamed text once the response begins.
+- Captain workspace at `~/.harbour/captain/` is auto-provisioned on first use with a `CLAUDE.md` describing Harbour's schema, API endpoints, and key paths. `AGENTS.md` and `GEMINI.md` are symlinked to the same file so all three CLIs share one knowledge base. Files are never overwritten, so you can customize them.
+- New Settings panel for Captain: pick CLI tool, model, thinking/effort level, and override the working directory.
+- Mobile layout: slide-out conversation drawer triggered from the header; new chat button in the header; input bar correctly positioned above the bottom nav.
+
 ## v1.13.0 — 2026-04-16
 
 ### DigitalOcean deployment
