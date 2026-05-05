@@ -65,10 +65,27 @@ const PROVIDERS = {
         "--verbose",
         "--include-partial-messages",
       ];
-      // If the workspace has its own .claude/settings.json, opt into the
-      // permission system. Otherwise, fall back to the legacy unrestricted
-      // mode so existing agents keep working without per-agent config.
-      const hasSettings = fs.existsSync(path.join(workingDir, ".claude", "settings.json"));
+      // If the workspace has a valid .claude/settings.json with a permissions
+      // object, opt into the permission system. Otherwise, fall back to the
+      // legacy unrestricted mode so existing agents keep working without
+      // per-agent config.
+      //
+      // Validate by stat (regular file, not a symlink to /dev/null) and JSON
+      // parse with a permissions object — a corrupt or empty settings file
+      // shouldn't silently switch the agent into a less-protected mode.
+      let hasSettings = false;
+      try {
+        const settingsPath = path.join(workingDir, ".claude", "settings.json");
+        const st = fs.statSync(settingsPath);
+        if (st.isFile() && st.size > 0) {
+          const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+          if (parsed && typeof parsed.permissions === "object") {
+            hasSettings = true;
+          }
+        }
+      } catch {
+        // Missing file, parse error, etc. — fall through to legacy mode.
+      }
       if (!hasSettings) {
         args.push("--dangerously-skip-permissions");
       }
