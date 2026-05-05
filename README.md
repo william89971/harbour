@@ -238,6 +238,8 @@ Projects are an optional way to organize your work. They're a view layer — a b
 
 ## Captain
 
+![Captain](public/screenshot-captain.png)
+
 **Captain** is an in-browser chat with a CLI tool (Claude Code, Codex, or Gemini CLI) that runs server-side and streams output back over SSE — your operator's console for the harbour itself. Ask it to summarize what ran today, query the database, debug a stuck job, or set up a new agent without leaving the dashboard.
 
 - Multi-conversation with session continuity. Stop a response mid-stream; old conversations stay resumable.
