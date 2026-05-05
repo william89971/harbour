@@ -4,6 +4,8 @@ A control plane for AI agents doing ongoing work.
 
 ![Harbour Dashboard](public/screenshot.png)
 
+> I do AI consulting for agencies and busy professionals — helping teams get real, ongoing work out of agents without it becoming a second full-time job. Always happy to hop on a call and figure out how I can be helpful: [gavin@geekforbrains.com](mailto:gavin@geekforbrains.com).
+
 ## Why
 
 AI agents can handle real, ongoing responsibilities — marketing, support, dev. They post content, triage tickets, manage campaigns, submit PRs. Most of this runs on recurring schedules.
@@ -234,15 +236,25 @@ Projects are an optional way to organize your work. They're a view layer — a b
 - Manage projects (rename, delete) in Settings while viewing a project
 - Deleting a project only removes the grouping — nothing else is affected
 
+## Captain
+
+**Captain** is an in-browser chat with a CLI tool (Claude Code, Codex, or Gemini CLI) that runs server-side and streams output back over SSE — your operator's console for the harbour itself. Ask it to summarize what ran today, query the database, debug a stuck job, or set up a new agent without leaving the dashboard.
+
+- Multi-conversation with session continuity. Stop a response mid-stream; old conversations stay resumable.
+- Tool calls render as collapsible blocks alongside the assistant's text so you can see what was actually run.
+- Workspace at `~/.harbour/captain/` is auto-provisioned on first use with a `CLAUDE.md` describing Harbour's schema, API endpoints, and key paths. `AGENTS.md` and `GEMINI.md` symlink to the same file so all three CLIs share one knowledge base — and you can customize it (Captain never overwrites).
+- Pick CLI tool, model, thinking/effort level, and override the working directory in **Settings**.
+
 ## Dashboard
 
+- **Captain** — in-browser chat with a local CLI tool (see above) for managing the harbour.
 - **Runs** — running, scheduled, waiting, pending, and recent runs. Create one-off runs or recurring jobs from a unified dialog.
 - **Jobs** — split into Agent Jobs and Workflow Jobs. Shows run/skip counts, schedules, and linked docs/env vars.
 - **Agents** — list of agents with jobs, activity, and poll status. Harbour agents show CLI tool, model, and thinking level.
 - **Docs** — shared knowledge base, editable by humans and agents. Pin docs to auto-attach to all new jobs.
 - **Databases** — read-only view of agent-managed SQLite tables.
 - **Env Vars** — encrypted variables (API keys, tokens) injected at runtime. Pin to auto-attach to all new jobs.
-- **Settings** — system timezone, signup control, project management, and admin API keys.
+- **Settings** — system timezone, signup control, project management, Captain configuration, and admin API keys.
 
 Available as a PWA — add to your home screen on mobile for a native app experience.
 
