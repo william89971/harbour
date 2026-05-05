@@ -432,14 +432,26 @@ export function ensureWorkingDir(agentName) {
  * immediately, followed by SIGKILL after `killGraceMs` (default 3s) if the
  * process hasn't exited.
  */
-export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, killGraceMs = 3000, onLine, signal } = {}) {
+export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, killGraceMs = 3000, onLine, signal, extraEnv } = {}) {
   return new Promise((resolve, reject) => {
-    // Build clean environment: strip Claude Code nesting guards
-    const env = { ...process.env };
+    // Build clean environment: strip Claude Code nesting guards, then layer
+    // run-scoped env vars (decrypted Harbour env vars for this job) on top.
+    // Putting them in the actual process env (not just the prompt) lets the
+    // agent's shell expand `$VARNAME` naturally — needed for `curl -H
+    // "Authorization: Bearer $TOKEN"` and similar patterns.
+    const env = { ...process.env, ...(extraEnv || {}) };
     delete env.CLAUDECODE;
     delete env.CLAUDE_CODE_ENTRYPOINT;
     delete env.CLAUDE_CODE_SESSION;
     delete env.CLAUDE_CODE_PARENT_SESSION;
+    // If the workspace has a `bin/` directory, prepend it to PATH so per-agent
+    // wrapper scripts (e.g. auth-curl shims) resolve as bare command names.
+    try {
+      const workspaceBin = path.join(cwd, "bin");
+      if (fs.statSync(workspaceBin).isDirectory()) {
+        env.PATH = `${workspaceBin}:${env.PATH || ""}`;
+      }
+    } catch { /* no workspace bin/, ignore */ }
 
     const child = spawn(binary, args, {
       cwd,
