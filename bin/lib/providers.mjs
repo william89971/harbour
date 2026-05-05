@@ -64,8 +64,14 @@ const PROVIDERS = {
         "--output-format", "stream-json",
         "--verbose",
         "--include-partial-messages",
-        "--dangerously-skip-permissions",
       ];
+      // If the workspace has its own .claude/settings.json, opt into the
+      // permission system. Otherwise, fall back to the legacy unrestricted
+      // mode so existing agents keep working without per-agent config.
+      const hasSettings = fs.existsSync(path.join(workingDir, ".claude", "settings.json"));
+      if (!hasSettings) {
+        args.push("--dangerously-skip-permissions");
+      }
       if (model) args.push("--model", model);
       if (thinking) args.push("--effort", thinking);
       if (isNewSession && sessionId) {
