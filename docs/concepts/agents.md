@@ -62,13 +62,14 @@ A harbour agent is the same agent record plus `type='harbour'` and a `cli`. When
       "agentId": "uuid", "name": "Writer",
       "apiKey": "hbr_...", "cli": "claude",
       "model": "sonnet", "thinking": null,
+      "eager": false,
       "url": "http://localhost:3000"
     }
   ]
 }
 ```
 
-`harbour agent run` reads this file and polls every configured agent in parallel (`Promise.allSettled`). `harbour agent install` writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60` — every 60 seconds, launchd fires the same `agent run` command. Logs land in `~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
+`harbour agent run` reads this file and polls every configured agent in parallel (`Promise.allSettled`). `harbour agent install` writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60` — every 60 seconds, launchd fires the same `agent run` command. The Docker (`Dockerfile.runner`) and systemd (`harbour-agent-runner.service`) variants use `while true; do … sleep 60; done`, which gives the same effective cadence. Logs land in `~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
 
 For each agent on each tick, the runner:
 
@@ -78,6 +79,14 @@ For each agent on each tick, the runner:
 4. Stream JSONL output back via `POST /api/runs/:id/output` in 750ms-batched flushes.
 5. After the CLI exits, post the final summary as activity. If the agent didn't already set a terminal status, mark the run `failed` (the failsafe).
 6. Save or clear the CLI session ID in `~/.harbour/sessions.json` keyed by run ID — used to resume on `waiting` and to allow comment-resume after a kill.
+
+### Eager polling
+
+The `eager` flag on a harbour agent (off by default) changes step 1 into a loop. After a run finishes cleanly — `done`, `waiting`, or `skipped` — the runner immediately re-polls instead of returning to launchd's 60s wait. The loop drains until `/next` returns null (no more queued/scheduled/due work), and then the agent falls back to the normal 60s cadence.
+
+A `failed` or `killed` outcome breaks the loop. Failures are usually transient (network, rate limits, OOM, timeouts), so the 60s gap acts as a free backoff. Kills mean the user explicitly said stop. There's also a hard cap of 50 iterations per launchd tick (`EAGER_MAX_ITERATIONS` in `bin/lib/runner.mjs`) as a safety net against bugs in `getAgentNextRun`.
+
+The flag travels two places: `~/.harbour/runners.json` (cached on the runner host, written by the dashboard for local agents and by `harbour agent connect <blob>` for remote ones), and the `agent.eager` field on every `/next` response payload (read live from the DB). The runner prefers the live value, so toggling Eager from the dashboard takes effect on the next poll without needing to reconnect a remote runner. See `shouldContinueEagerLoop` and `processNextRun` in `bin/lib/runner.mjs` for the decision logic.
 
 ### CLI providers
 

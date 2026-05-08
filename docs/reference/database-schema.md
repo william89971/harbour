@@ -56,6 +56,7 @@ Top-level entity. Each agent has zero-or-many jobs and one API key.
 | `model` | TEXT | | default model override (harbour agents) |
 | `thinking` | TEXT | | default thinking/effort override |
 | `remote` | INTEGER | NN, default 0 | runner lives off-host |
+| `eager` | INTEGER | NN, default 0 | drain queue back-to-back instead of waiting 60s between runs (harbour agents only) |
 | `created_at` | INTEGER | NN | |
 | `updated_at` | INTEGER | NN | |
 
