@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.14.1-dev — unreleased
+
+### Documentation
+
+- New `docs/` tree organized into concepts, guides, and reference. Indexed at [docs/README.md](docs/README.md) and linked from a new Documentation section in the top-level README. Every page was validated against a freshly initialized instance — register a user, mint admin and agent keys, exercise every documented endpoint and check payload shapes — before landing.
+- `GUIDE.md` (the worker-agent wire contract served at `/api/guide`) caught up with reality: `/next` job and attachment shapes now list every field the API returns (`workflow_only`, `timeout_minutes`, `run_id`, `embed_provider`, `created_at`, …); the status enum includes `killed`; retry coverage extends to `killed` runs; the five `?peek=true` response shapes are documented; default upload cap corrected to 500MB.
+- `ADMIN_GUIDE.md` (the admin-key wire contract served at `/api/admin-guide`) caught up too: `schedule` must be a JSON string (object form returns 400); `timeout_minutes` is update-only as `timeoutMinutes`; the PUT field is `active`, not `archived`; added `GET /api/env-vars/:id/value`, `DELETE /api/runs/:id`, `POST /api/runs/:id/kill`, and the unlink endpoints.
+- `src/lib/paths.ts` comment fixed: `HARBOUR_MAX_UPLOAD_MB` defaults to 500MB, not 100MB.
+
+### Fixes
+
+- `POST /api/agents/:id/jobs` and `PUT /api/jobs/:id` no longer 500 when the body's `schedule` is a JSON object — `normalizeSchedule()` now type-guards its input and returns `null` for non-strings, so the route's existing 400 path handles it.
+- `POST /api/jobs` (workflow-only) now stores the **canonical** schedule. Previously a valid input like `"hourly"` or `"every 5 minutes"` landed in the column verbatim; the schedule advancer can't read those, so `next_run_at` stayed null and the job never fired. Switched from `isValidSchedule` to `normalizeSchedule` and pass the result to `createJob`.
+
 ## v1.14.0 — 2026-05-05
 
 ### Captain
