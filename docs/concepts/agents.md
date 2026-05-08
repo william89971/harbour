@@ -96,9 +96,9 @@ The three built-in CLIs each have their own command shape. From `bin/lib/provide
 |---|---|---|---|
 | Claude Code | `claude` | `-p --output-format stream-json --verbose --include-partial-messages --dangerously-skip-permissions` | `--session-id <uuid>` (new) or `--resume <uuid>` |
 | Codex | `codex` | `exec --dangerously-bypass-approvals-and-sandbox --json` | `exec resume <thread_id>` |
-| Gemini CLI | `gemini` | `--prompt <p> --yolo -o stream-json` | `--resume <session_id>` |
+| Gemini CLI | `gemini` | `--prompt <p> --yolo --skip-trust -o stream-json` | `--resume <session_id>` |
 
-Model selection: Claude uses `--model`, Codex uses `-m`, Gemini uses `-m`. Thinking: Claude uses `--effort`, Codex uses `--reasoning-effort`, Gemini uses `--thinking`. The runner picks the per-job override if set, otherwise the agent default; it just passes the string through, so what's accepted depends on the underlying tool.
+Model selection: Claude uses `--model`, Codex and Gemini use `-m`. Thinking/reasoning depth: Claude uses `--effort <level>`, Codex uses `-c model_reasoning_effort=<level>` (the top-level `--reasoning-effort` flag was removed in Codex 0.128). Gemini dropped its `--thinking` flag in 0.40 — reasoning depth is controlled by model selection now, so the dashboard hides the thinking selector for Gemini agents. The runner picks the per-job override if set, otherwise the agent default; it just passes the string through, so what's accepted depends on the underlying tool.
 
 For Claude only, the runner pre-generates a session UUID before spawning so `PUT /api/runs/:id/session` can record the session ID up front — that lets the dashboard surface the session even while the CLI is still booting.
 

@@ -194,16 +194,18 @@ const PROVIDERS = {
 
   codex: {
     buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
+      // Codex 0.128+ removed the top-level --reasoning-effort flag. Use the
+      // generic config override instead: -c model_reasoning_effort=<level>.
       if (sessionId) {
         const args = ["exec", "resume", "--dangerously-bypass-approvals-and-sandbox", "--json"];
         if (model) args.push("-m", model);
-        if (thinking) args.push("--reasoning-effort", thinking);
+        if (thinking) args.push("-c", `model_reasoning_effort=${thinking}`);
         args.push(sessionId, prompt);
         return { binary: resolveBinary("codex"), args, cwd: workingDir };
       }
       const args = ["exec", "--dangerously-bypass-approvals-and-sandbox", "--json"];
       if (model) args.push("-m", model);
-      if (thinking) args.push("--reasoning-effort", thinking);
+      if (thinking) args.push("-c", `model_reasoning_effort=${thinking}`);
       args.push(prompt);
       return { binary: resolveBinary("codex"), args, cwd: workingDir };
     },
@@ -304,10 +306,12 @@ const PROVIDERS = {
   },
 
   gemini: {
-    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
-      const args = ["--prompt", prompt, "--yolo", "-o", "stream-json"];
+    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, _thinking) {
+      // Gemini 0.40+ removed --thinking (reasoning depth is now controlled
+      // by model selection) and requires --skip-trust for headless mode in
+      // non-trusted workspace dirs (otherwise exits code 55).
+      const args = ["--prompt", prompt, "--yolo", "--skip-trust", "-o", "stream-json"];
       if (model) args.push("-m", model);
-      if (thinking) args.push("--thinking", thinking);
       if (sessionId) {
         args.push("--resume", sessionId);
       }

@@ -18,6 +18,8 @@ export const CLI_CONFIG: Record<string, CliConfig> = {
   gemini: {
     models: ["gemini-2.5-pro", "gemini-2.5-flash"],
     thinkingLabel: "Thinking",
-    thinkingOptions: ["low", "medium", "high"],
+    // Gemini 0.40+ removed --thinking; reasoning depth is controlled by model
+    // selection now. Empty array hides the thinking selector in the UI.
+    thinkingOptions: [],
   },
 };
