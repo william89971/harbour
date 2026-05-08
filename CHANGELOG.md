@@ -2,6 +2,10 @@
 
 ## v1.14.1-dev — unreleased
 
+### Agents
+
+- New **Eager polling** toggle on harbour agents. When on, the runner drains the job queue back-to-back instead of waiting for the next 60s launchd tick — useful for clearing a backlog. The loop continues only on clean outcomes (`done`/`waiting`/`skipped`); `failed` and `killed` runs exit so transient issues (network, rate limits, OOM, timeouts) get a free 60s backoff. Hard cap of 50 iterations per tick. Off by default; enable per-agent in the agent's Settings dialog or at create time. The flag is read live from the `/next` payload, so dashboard toggles take effect on remote runners without reconnecting.
+
 ### Documentation
 
 - New `docs/` tree organized into concepts, guides, and reference. Indexed at [docs/README.md](docs/README.md) and linked from a new Documentation section in the top-level README. Every page was validated against a freshly initialized instance — register a user, mint admin and agent keys, exercise every documented endpoint and check payload shapes — before landing.
