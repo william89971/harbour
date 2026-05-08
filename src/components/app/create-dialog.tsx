@@ -14,7 +14,7 @@ import { AlertCircle, Bot, Pin, FileText, KeyRound, Loader2, Paperclip, Plus, Te
 import { useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { uploadFileToRun } from "@/lib/upload-client";
 
-type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null };
+type Agent = { id: string; name: string; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; eager: number | null };
 type Doc = { id: string; title: string; pinned: number };
 type EnvVar = { id: string; name: string; pinned: number };
 
