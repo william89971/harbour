@@ -15,6 +15,7 @@
 
 ### Fixes
 
+- **Codex CLI 0.128+ and Gemini CLI 0.40+ flag drift** ([#24](https://github.com/geekforbrains/harbour/issues/24), reported and patched in a fork by [@PoliTwit1984](https://github.com/PoliTwit1984)). Both upstream CLIs removed flags Harbour was passing, causing every Codex/Gemini-backed run to fail at argument parsing before the model was invoked. Codex now uses `-c model_reasoning_effort=<level>` instead of the removed `--reasoning-effort`. Gemini drops `--thinking` entirely (reasoning depth is controlled by model selection now) and adds `--skip-trust` for headless runs in non-trusted workspace dirs. The dashboard's thinking selector is now hidden for Gemini agents since the option is no longer wired through. New unit tests in `src/__tests__/providers.test.ts` lock in the argv shape for all three providers so future flag drift is caught in CI.
 - `POST /api/agents/:id/jobs` and `PUT /api/jobs/:id` no longer 500 when the body's `schedule` is a JSON object — `normalizeSchedule()` now type-guards its input and returns `null` for non-strings, so the route's existing 400 path handles it.
 - `POST /api/jobs` (workflow-only) now stores the **canonical** schedule. Previously a valid input like `"hourly"` or `"every 5 minutes"` landed in the column verbatim; the schedule advancer can't read those, so `next_run_at` stayed null and the job never fired. Switched from `isValidSchedule` to `normalizeSchedule` and pass the result to `createJob`.
 
