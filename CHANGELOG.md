@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.14.1-dev — unreleased
+## v1.15.0 — 2026-05-08
 
 ### Security
 
