@@ -545,6 +545,7 @@ async function processNextRun(runner) {
       timeoutMs,
       onLine,
       signal: killController.signal,
+      extraEnv: payload.env || {},
     });
   } catch (err) {
     clearInterval(killPollTimer);
