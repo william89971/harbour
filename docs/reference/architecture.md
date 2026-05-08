@@ -125,10 +125,13 @@ launchd (com.harbour.agent-runner, StartInterval=60)
               |
               +--> bin/lib/runner.mjs : runAgents()
                       for each runner in ~/.harbour/runners.json:
-                        GET /api/agents/:id/next        --> spawn CLI
+                        loop (eager agents) or once:
+                          GET /api/agents/:id/next      --> spawn CLI
                       if any runner.url is local:
                         GET /api/workflows/next         --> spawn shell
 ```
+
+Per-runner the inner step is single-shot by default. Agents flagged `eager` (column on `agents`, surfaced as `agent.eager` on the `/next` payload) keep polling and processing as long as the queue returns clean outcomes (`done`/`waiting`/`skipped`). A failed or killed run, an empty `/next`, or the 50-iteration safety cap exits the loop. Logic lives in `runSingleAgent` and `shouldContinueEagerLoop` (`bin/lib/runner.mjs`).
 
 Key files:
 

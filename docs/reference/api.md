@@ -87,7 +87,7 @@ Both accept `?after=<id>` to resume from an integer cursor. `Content-Type: text/
 | GET | `/api/agents` | `withAuth` | List agents; honors `?projectId=` |
 | POST | `/api/agents` | `withUserAuth` | Create agent; for non-remote harbour agents also writes a runner config |
 | GET | `/api/agents/:id` | `withAuth` | Fetch one agent |
-| PUT | `/api/agents/:id` | `withAuth` | Update agent (name/description/model/thinking); syncs runner config for harbour agents |
+| PUT | `/api/agents/:id` | `withAuth` | Update agent (name/description/model/thinking/eager); syncs runner config for harbour agents |
 | DELETE | `/api/agents/:id` | `withUserAuth` | Delete agent + its runner config |
 | POST | `/api/agents/:id/rotate-key` | `withUserAuth` | Generate a new API key for the agent |
 | GET | `/api/agents/:id/jobs` | `withAuth` | List the agent's jobs |

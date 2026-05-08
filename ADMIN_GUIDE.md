@@ -45,14 +45,14 @@ Content-Type: application/json
 }
 ```
 
-Type is `external` (default) or `harbour` (requires `cli`, `model`, `thinking` fields).
+Type is `external` (default) or `harbour` (requires `cli`, `model`, `thinking` fields). Harbour agents also accept an optional `eager` boolean — when true, the local runner drains the queue back-to-back instead of waiting 60s between runs. Off by default. Failed/killed runs always exit the eager loop.
 
 Response includes `apiKey` — save it, shown only once. Give this key and the agent's invite text to the worker agent.
 
 ### Get / Update / Delete an Agent
 ```
 GET    /api/agents/:id
-PUT    /api/agents/:id    { "name": "New Name", "description": "..." }
+PUT    /api/agents/:id    { "name": "New Name", "description": "...", "eager": true }
 DELETE /api/agents/:id
 ```
 

@@ -24,7 +24,7 @@ import { RunStatusIcon } from "@/components/app/run-status";
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
 
-type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; last_polled_at: number | null; created_at: number };
+type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; eager: number | null; last_polled_at: number | null; created_at: number };
 type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; workflow_command: string | null; workflow_only: number };
 type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
@@ -86,6 +86,7 @@ export default function AgentDetailPage() {
   const [editDesc, setEditDesc] = useState("");
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
+  const [editEager, setEditEager] = useState(false);
   const [showRotateKey, setShowRotateKey] = useState(false);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -95,10 +96,11 @@ export default function AgentDetailPage() {
   const [connectCopied, setConnectCopied] = useState(false);
 
   async function handleUpdateAgent() {
-    const body: Record<string, string> = { name: editName, description: editDesc };
+    const body: Record<string, string | boolean> = { name: editName, description: editDesc };
     if (agent?.type === "harbour") {
       body.model = editModel;
       body.thinking = editThinking;
+      body.eager = editEager;
     }
     const res = await fetch(`/api/agents/${id}`, {
       method: "PUT",
@@ -194,7 +196,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
               <Wifi className="h-3.5 w-3.5" />
             </Button>
           ) : null}
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setShowSettings(true); }} title="Settings">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setEditEager(!!agent.eager); setShowSettings(true); }} title="Settings">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -351,6 +353,24 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
                 defaultThinkingLabel="Default"
               />
             )}
+            {agent.type === "harbour" && (
+              <div className="rounded-md border p-3">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editEager}
+                    onChange={e => setEditEager(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <div className="text-sm">
+                    <p className="font-medium">Eager polling</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      After a run finishes, poll again immediately instead of waiting 60s. Drains backlogs fast — increases LLM cost.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="destructive" onClick={handleDeleteAgent} className="mr-auto"><Trash2 className="h-4 w-4 mr-1" /> Delete</Button>
@@ -417,7 +437,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
                 {(() => {
                   if (!agent || !newApiKey) return "";
                   const base = typeof window !== "undefined" ? window.location.origin : "";
-                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking };
+                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking, eager: !!agent.eager };
                   const blob = typeof window !== "undefined" ? btoa(JSON.stringify(payload)) : "";
                   return `harbour agent connect ${blob}`;
                 })()}
@@ -429,7 +449,7 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
                 <Button variant="outline" onClick={() => {
                   if (!agent || !newApiKey) return;
                   const base = typeof window !== "undefined" ? window.location.origin : "";
-                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking };
+                  const payload = { url: base, agentId: agent.id, apiKey: newApiKey, name: agent.name, cli: agent.cli, model: agent.model, thinking: agent.thinking, eager: !!agent.eager };
                   const blob = btoa(JSON.stringify(payload));
                   navigator.clipboard.writeText(`harbour agent connect ${blob}`);
                   setConnectCopied(true);

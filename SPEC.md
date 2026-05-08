@@ -30,7 +30,7 @@ Single SQLite file (default `~/.harbour/harbour.db`). PRAGMAs: `journal_mode = W
 
 **sessions** — Login sessions. Columns: `id`, `user_id` (FK → users, cascade), `expires_at`, `created_at`. Indexed on `user_id`.
 
-**agents** — External or harbour CLI agents that execute jobs. Columns: `id`, `name`, `description`, `api_key_hash`, `last_polled_at`, `type` (default `'external'`), `cli`, `model`, `thinking`, `created_at`, `updated_at`. Deleting an agent cascades to its jobs, runs, and project links.
+**agents** — External or harbour CLI agents that execute jobs. Columns: `id`, `name`, `description`, `api_key_hash`, `last_polled_at`, `type` (default `'external'`), `cli`, `model`, `thinking`, `remote` (default 0; runner lives off-host), `eager` (default 0; drain queue without 60s pauses), `created_at`, `updated_at`. Deleting an agent cascades to its jobs, runs, and project links.
 
 **jobs** — Recurring or one-off responsibilities assigned to an agent. Columns: `id`, `agent_id` (FK → agents, cascade), `name`, `description`, `instructions`, `schedule` (JSON), `check_command`, `timeout_minutes` (default 30), `one_off` (default 0), `active` (default 1), `model`, `thinking`, `last_run_at`, `next_run_at`, `created_at`, `updated_at`. Indexed on `agent_id` and composite `(agent_id, active, next_run_at)` for scheduler queries.
 
@@ -396,7 +396,11 @@ Each agent gets `~/.harbour/workspaces/<agent-name-slugified>/`. CLI tools run i
 
 ### launchd Integration
 
-`harbour agent install` creates `~/Library/LaunchAgents/com.harbour.agent-runner.plist`. Runs `harbour agent run` every 60 seconds. Logs to `~/.harbour/runner.log` and `~/.harbour/runner.err.log`. Passes PATH and HOME for CLI tool discovery.
+`harbour agent install` creates `~/Library/LaunchAgents/com.harbour.agent-runner.plist`. Runs `harbour agent run` every 60 seconds. Logs to `~/.harbour/runner.log` and `~/.harbour/runner.err.log`. Passes PATH and HOME for CLI tool discovery. The Docker (`Dockerfile.runner`) and systemd (`harbour-agent-runner.service`) variants use `while true; do … sleep 60; done` for the same effective cadence.
+
+### Eager polling
+
+Agents with `agents.eager = 1` make the runner loop within a single tick rather than waiting for launchd's next 60s firing. After a run completes, the runner re-polls `/next` immediately if the outcome was `done`/`waiting`/`skipped`; it bails on `failed`/`killed`/empty-poll/poll-error. Hard cap of 50 iterations per tick (`EAGER_MAX_ITERATIONS`). The flag is read live from the `agent.eager` field on the `/next` response payload, so dashboard toggles take effect without reconnecting remote runners. Decision logic: `shouldContinueEagerLoop` (`bin/lib/runner.mjs`).
 
 ### Normalized Event Types
 
