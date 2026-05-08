@@ -480,6 +480,13 @@ function buildRunPayload(runId: string) {
       : run.extra_instructions;
   }
 
+  // Agent runtime config (eager) — read live so remote runners pick up
+  // dashboard toggles without reconnecting.
+  const agentRow = run.agent_id
+    ? db.prepare(`SELECT eager FROM agents WHERE id = ?`).get(run.agent_id) as { eager: number } | undefined
+    : undefined;
+  const agent = agentRow ? { eager: !!agentRow.eager } : undefined;
+
   return {
     run: { id: run.id, status: run.status, activity: run.activity },
     job: {
@@ -492,6 +499,7 @@ function buildRunPayload(runId: string) {
       thinking: job.thinking || null,
       timeout_minutes: job.timeout_minutes ?? 30,
     },
+    ...(agent ? { agent } : {}),
     docs,
     data,
     env,

@@ -120,6 +120,12 @@ The runner injects the Harbour API credentials and endpoints into each prompt, s
 
 Model and thinking/effort levels can be set per agent (default) and overridden per job — letting you use a lighter model for routine tasks and a heavier one for complex work.
 
+#### Eager polling
+
+By default the runner pauses 60 seconds between runs, even when there's a backlog of pending work. Toggle **Eager polling** on a harbour agent to drain the queue without that pause: when a run finishes cleanly (`done`, `waiting`, or `skipped`), the runner immediately polls for another run instead of waiting for the next launchd tick. As soon as the queue empties, the agent falls back to the normal 60s cadence.
+
+A failed or killed run breaks the eager loop — failures are most often transient (network, rate limits, timeouts), so the 60s gap acts as a free backoff. Eager mode trades latency for cost: stacking many LLM-driven runs back-to-back burns budget faster than the natural pacing. Off by default; enable per-agent in the agent's settings.
+
 #### Running the runner on a different machine
 
 Sometimes a job needs to run on a specific machine — iOS/Xcode builds on a Mac, GPU work on a workstation — while the harbour server lives elsewhere. Harbour supports this by letting you mark an agent as **remote**: harbour won't install a local runner for it, and you run the runner on the target machine instead.

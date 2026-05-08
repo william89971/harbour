@@ -192,6 +192,54 @@ describe("Agent Management", () => {
     touchAgentPolled(id);
     expect(getAgentById(id).last_polled_at).not.toBeNull();
   });
+
+  it("should default eager to false on create", () => {
+    const agent = createAgent("e1", undefined, { type: "harbour", cli: "claude-code" });
+    expect(agent.eager).toBe(false);
+    expect(getAgentById(agent.id).eager).toBe(0);
+  });
+
+  it("should create a harbour agent with eager=true", () => {
+    const agent = createAgent("e2", undefined, { type: "harbour", cli: "claude-code", eager: true });
+    expect(agent.eager).toBe(true);
+    expect(getAgentById(agent.id).eager).toBe(1);
+  });
+
+  it("should toggle eager on update", () => {
+    const { id } = createAgent("e3", undefined, { type: "harbour", cli: "claude-code" });
+    expect(getAgentById(id).eager).toBe(0);
+    updateAgent(id, { eager: true });
+    expect(getAgentById(id).eager).toBe(1);
+    updateAgent(id, { eager: false });
+    expect(getAgentById(id).eager).toBe(0);
+  });
+
+  it("should preserve eager when other fields are updated", () => {
+    const { id } = createAgent("e4", undefined, { type: "harbour", cli: "claude-code", eager: true });
+    updateAgent(id, { name: "renamed" });
+    const after = getAgentById(id);
+    expect(after.name).toBe("renamed");
+    expect(after.eager).toBe(1);
+  });
+
+  it("should expose eager in listAgents", () => {
+    createAgent("e5", undefined, { type: "harbour", cli: "claude-code", eager: true });
+    const list = listAgents();
+    const e5 = list.find((a: any) => a.name === "e5") as any;
+    expect(e5).toBeDefined();
+    expect(e5.eager).toBe(1);
+  });
+
+  it("should be idempotent under repeated initializeSchema calls", () => {
+    // Re-running initializeSchema should not re-add the eager column or fail
+    const db = getDb();
+    expect(() => initializeSchema(db)).not.toThrow();
+    expect(() => initializeSchema(db)).not.toThrow();
+    const cols = db.prepare(`PRAGMA table_info(agents)`).all() as any[];
+    const eagerCols = cols.filter(c => c.name === "eager");
+    expect(eagerCols).toHaveLength(1);
+    expect(eagerCols[0].dflt_value).toBe("0");
+  });
 });
 
 // ===========================================================================
@@ -764,6 +812,47 @@ describe("/next Payload", () => {
     expect(payload!.docs).toHaveLength(1);
     expect((payload!.docs[0] as any).title).toBe("Brand Guide");
     expect(payload!.data.history).toHaveLength(1);
+  });
+
+  it("should expose agent.eager=false on the payload by default", () => {
+    const agentId = seedAgent().id;
+    const job = createJob(agentId, { name: "J1", schedule: '{"every":1}' });
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect((payload as any).agent).toBeDefined();
+    expect((payload as any).agent.eager).toBe(false);
+  });
+
+  it("should expose agent.eager=true on the payload when set", () => {
+    const { id: agentId } = createAgent("eager-bot", undefined, { type: "harbour", cli: "claude-code", eager: true });
+    const job = createJob(agentId, { name: "J1", schedule: '{"every":1}' });
+    updateJob(job!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    const payload = getAgentNextRun(agentId);
+    expect(payload).not.toBeNull();
+    expect((payload as any).agent.eager).toBe(true);
+  });
+
+  it("should reflect live eager toggle changes (no payload caching)", () => {
+    const { id: agentId } = createAgent("toggle-bot", undefined, { type: "harbour", cli: "claude-code" });
+    const job1 = createJob(agentId, { name: "J1", schedule: '{"every":1}' });
+    updateJob(job1!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    let payload = getAgentNextRun(agentId);
+    expect((payload as any).agent.eager).toBe(false);
+
+    // Mark the run as done so the next poll picks up another job
+    updateRunStatus(payload!.run.id, "done");
+
+    // Toggle eager + queue another job
+    updateAgent(agentId, { eager: true });
+    const job2 = createJob(agentId, { name: "J2", schedule: '{"every":1}' });
+    updateJob(job2!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
+
+    payload = getAgentNextRun(agentId);
+    expect((payload as any).agent.eager).toBe(true);
   });
 });
 
