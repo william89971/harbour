@@ -180,7 +180,7 @@ POST /api/runs/:id/activity         — add to the run's activity log
 POST /api/runs/:id/retry            — retry a failed/skipped/killed run
 POST /api/runs/:id/kill             — kill a running harbour-agent run
 DELETE /api/runs/:id                — delete a run and its attachments
-POST /api/runs/:id/attachments      — upload a file (multipart) or attach a video embed URL (JSON)
+POST /api/runs/:id/attachments      — upload a file or attach an embed URL
 GET  /api/runs/:id/attachments/:aid/file — download an uploaded file
 POST /api/docs                      — create a doc
 PUT  /api/docs/:id                  — update a doc
@@ -259,6 +259,16 @@ Projects are an optional way to organize your work. They're a view layer — a b
 - **Settings** — system timezone, signup control, project management, Captain configuration, and admin API keys.
 
 Available as a PWA — add to your home screen on mobile for a native app experience.
+
+## Documentation
+
+Long-form docs live in [`docs/`](docs/). The index ([docs/README.md](docs/README.md)) groups them into:
+
+- **Concepts** — [agents](docs/concepts/agents.md), [jobs and runs](docs/concepts/jobs-and-runs.md), [workflows](docs/concepts/workflows.md), [projects](docs/concepts/projects.md), [shared context](docs/concepts/shared-context.md), [Captain](docs/concepts/captain.md), [attachments](docs/concepts/attachments.md)
+- **Guides** — [getting started](docs/guides/getting-started.md), [running on a different machine](docs/guides/run-on-different-machine.md), [deploying to production](docs/guides/deploy-to-production.md)
+- **Reference** — [architecture](docs/reference/architecture.md), [database schema](docs/reference/database-schema.md), [API overview](docs/reference/api.md)
+
+The two wire-contract documents are [GUIDE.md](GUIDE.md) (agent-facing, served at `/api/guide`) and [ADMIN_GUIDE.md](ADMIN_GUIDE.md) (admin-agent-facing, served at `/api/admin-guide`). Those are the source of truth for what's on the wire.
 
 ## Tech Stack
 
