@@ -2,6 +2,12 @@
 
 ## v1.14.1-dev — unreleased
 
+### Security
+
+- **Per-agent permission opt-in for Claude Code agents.** Previously every `claude -p` invocation passed `--dangerously-skip-permissions`, bypassing the permission system entirely and making per-agent constraint impossible. Now the runner drops that flag whenever the agent's workspace contains a valid `.claude/settings.json` with a `permissions` object, letting you scope individual agents (deny `sqlite3`/`rm`/`ssh`, deny reads of `.env*` and `~/.ssh`, restrict `WebFetch` to allow-listed domains, add `PreToolUse` hooks for argument-level checks). Detection is hardened against TOCTOU and malformed configs: symlinks-to-`/dev/null`, zero-byte files, and corrupt JSON all fall back to the legacy unrestricted mode rather than silently switching to a half-configured permission system. Agents without a settings file see zero behavior change. Recommended layout: `~/.harbour/workspaces/<agent>/.claude/settings.json` with `permissions.defaultMode: "dontAsk"` so unrecognized tool calls auto-deny instead of blocking on a prompt that has no UI under `-p`.
+- **Job env vars now reach the agent's shell.** `runCliTool` accepts an `extraEnv` map; the runner layers `payload.env` onto the spawned process environment so the agent can write `curl -H "Authorization: Bearer $TOKEN"` without referencing the secret as text in the LLM-emitted Bash command (which `dontAsk` mode auto-denies). For agents without job-linked env vars, `payload.env` is `{}` and the spawn env is unchanged.
+- **Workspace `bin/` on PATH.** If an agent's workspace has a `bin/` directory, the runner prepends it to the spawned PATH so per-agent wrapper scripts (e.g. an `auth-curl` shim that internally reads env vars and execs `curl` with the right headers) resolve as bare command names. The agent's emitted command stays free of `$VAR` references; the wrapper's internal env-var use is invisible to the permission layer.
+
 ### Agents
 
 - New **Eager polling** toggle on harbour agents. When on, the runner drains the job queue back-to-back instead of waiting for the next 60s launchd tick — useful for clearing a backlog. The loop continues only on clean outcomes (`done`/`waiting`/`skipped`); `failed` and `killed` runs exit so transient issues (network, rate limits, OOM, timeouts) get a free 60s backoff. Hard cap of 50 iterations per tick. Off by default; enable per-agent in the agent's Settings dialog or at create time. The flag is read live from the `/next` payload, so dashboard toggles take effect on remote runners without reconnecting.

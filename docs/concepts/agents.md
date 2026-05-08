@@ -94,7 +94,7 @@ The three built-in CLIs each have their own command shape. From `bin/lib/provide
 
 | CLI | Binary | Key flags | Resume mechanism |
 |---|---|---|---|
-| Claude Code | `claude` | `-p --output-format stream-json --verbose --include-partial-messages --dangerously-skip-permissions` | `--session-id <uuid>` (new) or `--resume <uuid>` |
+| Claude Code | `claude` | `-p --output-format stream-json --verbose --include-partial-messages` (plus `--dangerously-skip-permissions` unless the workspace has a valid `.claude/settings.json` — see [Per-agent permissions](#per-agent-permissions-claude-code)) | `--session-id <uuid>` (new) or `--resume <uuid>` |
 | Codex | `codex` | `exec --dangerously-bypass-approvals-and-sandbox --json` | `exec resume <thread_id>` |
 | Gemini CLI | `gemini` | `--prompt <p> --yolo --skip-trust -o stream-json` | `--resume <session_id>` |
 
@@ -107,6 +107,26 @@ For Claude only, the runner pre-generates a session UUID before spawning so `PUT
 Each harbour agent gets a workspace directory at `~/.harbour/workspaces/<slugified-agent-name>/` (created lazily by `ensureWorkingDir`). The runner sets this as the CLI's `cwd`, so all of an agent's runs share filesystem state — checked-out repos, build caches, downloaded fixtures. Two agents have independent workspaces; two **runs** of the same agent share one. If you want isolation between jobs, do that in your job instructions (e.g. `cd /tmp/some-clean-dir && …`), not at the workspace level.
 
 The workspace path defaults to `<HARBOUR_HOME>/workspaces/...` — set `HARBOUR_HOME` to relocate the whole tree. There's no per-agent override; if you want one agent in a different directory, point its job instructions at it.
+
+The runner also layers two workspace-derived things onto each spawn: any job-linked env vars (`payload.env`) are merged into the spawned process environment so the agent's shell can expand `$VAR` natively (rather than the LLM emitting the secret as text), and if the workspace has a `bin/` directory it's prepended to PATH so per-agent wrapper scripts resolve as bare command names. Both behaviors are no-ops when there are no env vars / no `bin/`.
+
+### Per-agent permissions (Claude Code)
+
+By default the runner invokes Claude Code with `--dangerously-skip-permissions` — the permission system can't run interactively under `-p`, and refusing every tool call would deadlock the agent. The flag is the price of headless operation, but it also disables `.claude/settings.json` allow/deny rules entirely.
+
+If a Claude Code agent's workspace contains a valid `.claude/settings.json` — a regular file (not a symlink), non-empty, parseable JSON, with a `permissions` object — the runner drops `--dangerously-skip-permissions` and lets the permission system run. This is the per-agent opt-in: agents without a settings file see the legacy unrestricted behavior, agents with one are scoped to whatever their settings allow.
+
+Detection is conservative on purpose. A symlink to `/dev/null`, a zero-byte placeholder, or a corrupt/half-written JSON file all fall back to the legacy mode rather than silently switching the agent into a less-protected configuration. The probe is in `bin/lib/providers.mjs`.
+
+Effective `settings.json` for headless agents:
+
+- `permissions.defaultMode: "dontAsk"` so unrecognized tool calls are auto-denied. The default `"default"` mode would block waiting for an interactive prompt that has no UI.
+- `deny` rules win over `allow` rules — make deny-list mistakes safe.
+- `Bash(...)` patterns match the literal command string, so URL filtering inside `curl` is fragile (the URL position depends on flag order). Do argument-level checks in a `PreToolUse` hook under `.claude/hooks/`.
+
+This works well together with the workspace `bin/` PATH injection above: per-agent wrapper scripts (e.g. an `auth-curl` shim that internally reads env vars and execs `curl`) keep `$VAR` references out of the LLM-emitted command, where `dontAsk` mode would otherwise auto-deny them.
+
+Codex and Gemini ship with their own bypass flags (`--dangerously-bypass-approvals-and-sandbox` and `--yolo --skip-trust`); the per-workspace opt-in is Claude-only today.
 
 ### Streaming and kill
 

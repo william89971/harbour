@@ -380,7 +380,7 @@ Model and thinking can be set per agent (default) and overridden per job. The ru
 
 Each provider (`bin/lib/providers.mjs`) implements: `buildCommand()`, `parseLine()`, `parseResult()`, and optionally `generateSessionId()`.
 
-**Claude Code** (`claude`): `--output-format stream-json --verbose --dangerously-skip-permissions`. Session management via `--session-id` (new) or `--resume` (resume). Effort levels: low/medium/high/max.
+**Claude Code** (`claude`): `--output-format stream-json --verbose`, plus `--dangerously-skip-permissions` unless the workspace has a valid `.claude/settings.json` with a `permissions` object — in which case the flag is omitted and the permission system runs. Detection rejects non-regular files, zero-byte placeholders, and unparseable JSON to avoid silent fallback into a half-configured permission mode (`bin/lib/providers.mjs`). Session management via `--session-id` (new) or `--resume` (resume). Effort levels: low/medium/high/max.
 
 **Codex** (`codex`): `exec --dangerously-bypass-approvals-and-sandbox --json`. Thread-based sessions via `--resume`. Reasoning effort: low/medium/high.
 
@@ -406,9 +406,11 @@ Agents with `agents.eager = 1` make the runner loop within a single tick rather 
 
 All providers map to: `text_delta`, `thinking`, `tool_start`, `tool_end`, `info`, `result`, `error`. Displayed in the dashboard's live output terminal.
 
-### Environment Stripping
+### Environment Stripping and Layering
 
-The runner strips Claude Code nesting guard env vars (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SESSION`, `CLAUDE_CODE_PARENT_SESSION`) before spawning, preventing the spawned process from detecting it's inside another Claude Code session.
+The runner strips Claude Code nesting guard env vars (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SESSION`, `CLAUDE_CODE_PARENT_SESSION`) before spawning, preventing the spawned process from detecting it's inside another Claude Code session. After stripping, `runCliTool` layers `payload.env` (decrypted job env vars) onto the spawned process environment via the `extraEnv` parameter — this puts secrets in the actual process env where the agent's shell can expand `$VAR` natively, rather than forcing the LLM to emit the secret as text in a Bash command (which a Claude permission `dontAsk` mode auto-denies).
+
+If the workspace contains a `bin/` directory, it is prepended to PATH so per-agent wrapper scripts resolve as bare command names — useful in combination with permission-system gating, since wrappers can read env vars internally and the LLM-visible command stays clean.
 
 ---
 
