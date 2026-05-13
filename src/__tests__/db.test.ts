@@ -125,7 +125,7 @@ describe("User Management", () => {
     createUser("alice@example.com", "pw", "Alice");
     const users = listUsers();
     expect(users).toHaveLength(2);
-    expect((users[0] as any).email).toBe("alice@example.com");
+    expect((users[0] as Record<string, unknown>).email).toBe("alice@example.com");
   });
 });
 
@@ -145,7 +145,7 @@ describe("Agent Management", () => {
     const { apiKey } = seedAgent();
     const found = authenticateAgent(apiKey);
     expect(found).not.toBeNull();
-    expect(found.name).toBe("test-bot");
+    expect(found!.name).toBe("test-bot");
   });
 
   it("should reject invalid API key", () => {
@@ -167,10 +167,10 @@ describe("Agent Management", () => {
     seedAgent("alpha-bot");
     const agents = listAgents();
     expect(agents).toHaveLength(2);
-    expect((agents[0] as any).name).toBe("alpha-bot");
-    expect((agents[0] as any).job_count).toBe(0);
-    expect((agents[0] as any).waiting_count).toBe(0);
-    expect((agents[0] as any).pending_count).toBe(0);
+    expect((agents[0] as Record<string, unknown>).name).toBe("alpha-bot");
+    expect((agents[0] as Record<string, unknown>).job_count).toBe(0);
+    expect((agents[0] as Record<string, unknown>).waiting_count).toBe(0);
+    expect((agents[0] as Record<string, unknown>).pending_count).toBe(0);
   });
 
   it("should update an agent", () => {
@@ -225,7 +225,7 @@ describe("Agent Management", () => {
   it("should expose eager in listAgents", () => {
     createAgent("e5", undefined, { type: "harbour", cli: "claude-code", eager: true });
     const list = listAgents();
-    const e5 = list.find((a: any) => a.name === "e5") as any;
+    const e5 = (list as Record<string, unknown>[]).find(a => a.name === "e5") as Record<string, unknown>;
     expect(e5).toBeDefined();
     expect(e5.eager).toBe(1);
   });
@@ -235,7 +235,7 @@ describe("Agent Management", () => {
     const db = getDb();
     expect(() => initializeSchema(db)).not.toThrow();
     expect(() => initializeSchema(db)).not.toThrow();
-    const cols = db.prepare(`PRAGMA table_info(agents)`).all() as any[];
+    const cols = db.prepare(`PRAGMA table_info(agents)`).all() as Array<Record<string, unknown>>;
     const eagerCols = cols.filter(c => c.name === "eager");
     expect(eagerCols).toHaveLength(1);
     expect(eagerCols[0].dflt_value).toBe("0");
@@ -291,9 +291,9 @@ describe("Job Management", () => {
     seedJob(agentId, "Job B");
     const jobs = listJobsByAgent(agentId);
     expect(jobs).toHaveLength(2);
-    expect((jobs[0] as any).total_runs).toBe(0);
-    expect((jobs[0] as any).waiting_runs).toBe(0);
-    expect((jobs[0] as any).pending_runs).toBe(0);
+    expect((jobs[0] as Record<string, unknown>).total_runs).toBe(0);
+    expect((jobs[0] as Record<string, unknown>).waiting_runs).toBe(0);
+    expect((jobs[0] as Record<string, unknown>).pending_runs).toBe(0);
   });
 
   it("should list all jobs across agents", () => {
@@ -302,7 +302,7 @@ describe("Job Management", () => {
     seedJob(agent2, "Job B");
     const jobs = listAllJobs();
     expect(jobs).toHaveLength(2);
-    expect((jobs[0] as any).agent_name).toBeDefined();
+    expect((jobs[0] as Record<string, unknown>).agent_name).toBeDefined();
   });
 
   it("should update a job", () => {
@@ -416,9 +416,9 @@ describe("Activity Log", () => {
 
     const activity = listRunActivity(run!.id);
     expect(activity).toHaveLength(3);
-    expect((activity[0] as any).author_type).toBe("agent");
-    expect((activity[1] as any).author_type).toBe("user");
-    expect((activity[2] as any).author_type).toBe("system");
+    expect((activity[0] as Record<string, unknown>).author_type).toBe("agent");
+    expect((activity[1] as Record<string, unknown>).author_type).toBe("user");
+    expect((activity[2] as Record<string, unknown>).author_type).toBe("system");
   });
 });
 
@@ -533,7 +533,7 @@ describe("Docs", () => {
 
     const revisions = getDocRevisions(doc!.id);
     expect(revisions).toHaveLength(2);
-    const contents = (revisions as any[]).map(r => r.content).sort();
+    const contents = (revisions as Array<Record<string, unknown>>).map(r => r.content).sort();
     expect(contents).toEqual(["v1", "v2"]);
   });
 
@@ -555,7 +555,7 @@ describe("Docs", () => {
     createDoc("Alpha");
     const docs = listDocs();
     expect(docs).toHaveLength(2);
-    expect((docs[0] as any).title).toBe("Alpha");
+    expect((docs[0] as Record<string, unknown>).title).toBe("Alpha");
   });
 
   it("should link docs to jobs", () => {
@@ -618,10 +618,10 @@ describe("Databases", () => {
     insertRows(db.id, [{ name: "old" }]);
 
     const rows = getRows(db.id)!.rows;
-    updateRow(db.id, (rows[0] as any)._id, { name: "new" });
+    updateRow(db.id, (rows[0] as Record<string, unknown>)._id as number, { name: "new" });
 
     const updated = getRows(db.id)!.rows;
-    expect((updated[0] as any).name).toBe("new");
+    expect((updated[0] as Record<string, unknown>).name).toBe("new");
   });
 
   it("should delete a row", () => {
@@ -629,7 +629,7 @@ describe("Databases", () => {
     insertRows(db.id, [{ val: "a" }, { val: "b" }]);
 
     const rows = getRows(db.id)!.rows;
-    deleteRow(db.id, (rows[0] as any)._id);
+    deleteRow(db.id, (rows[0] as Record<string, unknown>)._id as number);
 
     expect(getRows(db.id)!.total).toBe(1);
   });
@@ -810,7 +810,7 @@ describe("/next Payload", () => {
     expect(payload!.job.name).toBe("Full Job");
     expect(payload!.job.instructions).toBe("Do everything");
     expect(payload!.docs).toHaveLength(1);
-    expect((payload!.docs[0] as any).title).toBe("Brand Guide");
+    expect((payload!.docs[0] as Record<string, unknown>).title).toBe("Brand Guide");
     expect(payload!.data.history).toHaveLength(1);
   });
 
@@ -821,8 +821,9 @@ describe("/next Payload", () => {
 
     const payload = getAgentNextRun(agentId);
     expect(payload).not.toBeNull();
-    expect((payload as any).agent).toBeDefined();
-    expect((payload as any).agent.eager).toBe(false);
+    expect((payload as Record<string, unknown>).agent).toBeDefined();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    expect(((payload as Record<string, unknown>).agent as Record<string, unknown>).eager).toBe(false);
   });
 
   it("should expose agent.eager=true on the payload when set", () => {
@@ -832,7 +833,7 @@ describe("/next Payload", () => {
 
     const payload = getAgentNextRun(agentId);
     expect(payload).not.toBeNull();
-    expect((payload as any).agent.eager).toBe(true);
+    expect(((payload as Record<string, unknown>).agent as Record<string, unknown>).eager).toBe(true);
   });
 
   it("should reflect live eager toggle changes (no payload caching)", () => {
@@ -841,7 +842,7 @@ describe("/next Payload", () => {
     updateJob(job1!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
 
     let payload = getAgentNextRun(agentId);
-    expect((payload as any).agent.eager).toBe(false);
+    expect(((payload as Record<string, unknown>).agent as Record<string, unknown>).eager).toBe(false);
 
     // Mark the run as done so the next poll picks up another job
     updateRunStatus(payload!.run.id, "done");
@@ -852,7 +853,7 @@ describe("/next Payload", () => {
     updateJob(job2!.id, { nextRunAt: Math.floor(Date.now() / 1000) - 60 });
 
     payload = getAgentNextRun(agentId);
-    expect((payload as any).agent.eager).toBe(true);
+    expect(((payload as Record<string, unknown>).agent as Record<string, unknown>).eager).toBe(true);
   });
 });
 
@@ -942,7 +943,7 @@ describe("Run List Queries", () => {
 
     const scheduled = listScheduledRuns();
     expect(scheduled).toHaveLength(1);
-    expect((scheduled[0] as any).job_active).toBe(1);
+    expect((scheduled[0] as Record<string, unknown>).job_active).toBe(1);
   });
 
   it("should reflect paused job in run listing", () => {
@@ -952,7 +953,7 @@ describe("Run List Queries", () => {
 
     const scheduled = listScheduledRuns();
     expect(scheduled).toHaveLength(1);
-    expect((scheduled[0] as any).job_active).toBe(0);
+    expect((scheduled[0] as Record<string, unknown>).job_active).toBe(0);
   });
 
   it("should include job_active in running runs", () => {
@@ -961,7 +962,7 @@ describe("Run List Queries", () => {
 
     const running = listRunningRuns();
     expect(running).toHaveLength(1);
-    expect((running[0] as any).job_active).toBe(1);
+    expect((running[0] as Record<string, unknown>).job_active).toBe(1);
   });
 
   it("should include job_active in waiting runs", () => {
@@ -971,7 +972,7 @@ describe("Run List Queries", () => {
 
     const waiting = listWaitingRuns();
     expect(waiting).toHaveLength(1);
-    expect((waiting[0] as any).job_active).toBe(1);
+    expect((waiting[0] as Record<string, unknown>).job_active).toBe(1);
   });
 
   it("should include job_active in recent runs", () => {
@@ -981,6 +982,6 @@ describe("Run List Queries", () => {
 
     const recent = listRecentRuns();
     expect(recent).toHaveLength(1);
-    expect((recent[0] as any).job_active).toBe(1);
+    expect((recent[0] as Record<string, unknown>).job_active).toBe(1);
   });
 });

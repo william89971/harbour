@@ -1,7 +1,11 @@
 import { loadRunnerConfigs, loadSessions, saveSessions } from "./config.mjs";
-import { getProvider, ensureWorkingDir, runCliTool } from "./providers.mjs";
+import { getProvider, ensureWorkingDir, ensureRunWorkingDir, runCliTool } from "./providers.mjs";
+import { writeSafeSettings } from "./safe-settings.mjs";
+import { installSafeShims, safeModePath } from "./safe-shims.mjs";
+import { runApiAgent, decideApiFinish } from "./api-agent.mjs";
+import { scrubSecrets } from "./scrub.mjs";
 import { spawn } from "child_process";
-import { mkdirSync } from "fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -298,7 +302,11 @@ export function shouldContinueEagerLoop(outcome, eager) {
 async function processNextRun(runner) {
   const { agentId, apiKey, cli, model: agentModel, thinking: agentThinking, name: agentName, url } = runner;
   const provider = getProvider(cli);
-  const sessions = loadSessions();
+  const maxConcurrent = Math.max(1, Math.min(10, Number(runner.maxConcurrentRuns) || 1));
+  const isConcurrentMode = maxConcurrent > 1;
+  // Global sessions file is only used in single-run mode; concurrent mode uses
+  // per-run session.json files (no read-modify-write race across siblings).
+  const sessions = isConcurrentMode ? {} : loadSessions();
 
   console.log(`  [${agentName}] Polling...`);
 
@@ -320,13 +328,49 @@ async function processNextRun(runner) {
   const eager = payload.agent?.eager !== undefined ? !!payload.agent.eager : !!runner.eager;
 
   const runId = payload.run.id;
-  const existingSession = sessions[runId];
+
+  // Activity-log scrubber: strips decrypted env-var values out of any text we
+  // post back to the dashboard. Best-effort — defeated by encoding/splitting,
+  // but catches the common `echo $TOKEN` / `curl --verbose` leak.
+  const scrub = (text) => scrubSecrets(text, payload.env);
+
+  // Per-run cwd + sessions when concurrency is enabled, legacy global otherwise.
+  const workingDir = isConcurrentMode ? ensureRunWorkingDir(agentName, runId) : ensureWorkingDir(agentName);
+  const perRunSessionFile = isConcurrentMode ? join(workingDir, "session.json") : null;
+
+  // Read existing session (resume case)
+  let existingSession;
+  if (isConcurrentMode) {
+    try {
+      if (existsSync(perRunSessionFile)) {
+        existingSession = JSON.parse(readFileSync(perRunSessionFile, "utf-8"));
+      }
+    } catch { /* corrupt or missing — treat as fresh */ }
+  } else {
+    existingSession = sessions[runId];
+  }
   const isResume = !!existingSession;
   let sessionId = existingSession?.sessionId || null;
   const isNewSession = !isResume;
 
-  // For Claude, generate a session ID upfront so we can always resume
-  const workingDir = ensureWorkingDir(agentName);
+  // Helpers for session save/clear that branch on mode.
+  const persistSession = (data) => {
+    if (isConcurrentMode) {
+      try { writeFileSync(perRunSessionFile, JSON.stringify(data, null, 2)); }
+      catch (err) { console.error(`  [${agentName}] Failed to write per-run session: ${err.message}`); }
+    } else {
+      sessions[runId] = data;
+      saveSessions(sessions);
+    }
+  };
+  const clearSession = () => {
+    if (isConcurrentMode) {
+      try { unlinkSync(perRunSessionFile); } catch { /* already gone */ }
+    } else {
+      delete sessions[runId];
+      saveSessions(sessions);
+    }
+  };
   if (isNewSession && provider.generateSessionId) {
     sessionId = provider.generateSessionId();
     // Report pre-generated session ID immediately
@@ -382,7 +426,7 @@ async function processNextRun(runner) {
         console.log(`  [${agentName}] Workflow exited 77 — skipping`);
         if (wfResult.stderr?.trim()) {
           try {
-            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: wfResult.stderr.trim() });
+            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: scrub(wfResult.stderr.trim()) });
           } catch { /* best effort */ }
         }
         try {
@@ -396,7 +440,7 @@ async function processNextRun(runner) {
         console.error(`  [${agentName}] Workflow exited ${wfResult.code} — failed`);
         const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Workflow exited with code ${wfResult.code}`;
         try {
-          await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
+          await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: scrub(errOutput) });
           await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
         } catch { /* best effort */ }
         return { outcome: "failed", eager };
@@ -408,7 +452,7 @@ async function processNextRun(runner) {
         const output = wfResult.stdout?.trim();
         if (output) {
           try {
-            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: output });
+            await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: scrub(output) });
           } catch { /* best effort */ }
         }
         try {
@@ -449,7 +493,58 @@ async function processNextRun(runner) {
   // Build CLI command — job-level model/thinking override agent defaults
   const model = payload.job?.model || agentModel;
   const thinking = payload.job?.thinking || agentThinking;
-  const cmd = provider.buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking);
+  // Permission mode lives on the agent record. Server is the source of
+  // truth; the on-disk runner config is a fallback for older payloads.
+  const permissionMode = payload.agent?.permission_mode || runner.permissionMode || "unrestricted";
+
+  // For safe-mode Claude agents in a fresh workspace, materialize the
+  // bundled default .claude/settings.json once. Idempotent — if the user
+  // has hand-edited it, we leave it alone.
+  if (permissionMode === "safe" && cli === "claude") {
+    try {
+      const { written } = writeSafeSettings(workingDir);
+      if (written) console.log(`  [${agentName}] Wrote default safe-mode settings.json`);
+    } catch (err) {
+      console.error(`  [${agentName}] Failed to write safe-mode settings.json: ${err.message}`);
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Failed to write safe-mode settings.json: ${err.message}` });
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+      } catch { /* best effort */ }
+      return { outcome: "failed", eager };
+    }
+  }
+
+  // Harbour-level safe mode (Codex / Gemini / Shell). Install the shim
+  // wrappers and build a modified PATH that prepends them. This is a soft
+  // sandbox — see bin/lib/safe-shims.mjs for the explicit caveats. Claude
+  // skips this path because its own settings.json system is stricter.
+  let safePathOverride = null;
+  if ((permissionMode === "safe" || permissionMode === "custom") && cli !== "claude" && cli !== "api") {
+    try {
+      installSafeShims();
+      safePathOverride = safeModePath(workingDir);
+      console.log(`  [${agentName}] Safe-mode PATH active (shim wrappers prepended)`);
+    } catch (err) {
+      console.error(`  [${agentName}] Failed to install safe-mode shims: ${err.message}`);
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Failed to install safe-mode shims: ${err.message}` });
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+      } catch { /* best effort */ }
+      return { outcome: "failed", eager };
+    }
+  }
+
+  let cmd;
+  try {
+    cmd = provider.buildCommand({ prompt, model, workingDir, sessionId, isNewSession, thinking, runner, permissionMode });
+  } catch (err) {
+    console.error(`  [${agentName}] Failed to build CLI command: ${err.message}`);
+    try {
+      await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `Failed to build CLI command: ${err.message}` });
+      await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+    } catch { /* best effort */ }
+    return { outcome: "failed", eager };
+  }
 
   // Batch streaming events and flush to Harbour periodically
   let eventBatch = [];
@@ -540,12 +635,94 @@ async function processNextRun(runner) {
   const timeoutMinutes = payload.job?.timeout_minutes || 30;
   const timeoutMs = timeoutMinutes * 60 * 1000;
   let result;
+
+  // API-agent branch: no subprocess. Drive a function-calling chat loop
+  // against the configured OpenAI-compatible endpoint. The api provider's
+  // buildCommand returns a sentinel with useApiAgent: true. We prefer
+  // the live payload values for apiBaseUrl / apiKeyEnv (so dashboard
+  // edits take effect on the next poll) and fall back to the on-disk
+  // runner config.
+  if (cmd?.useApiAgent) {
+    const apiBaseUrl = payload.agent?.api_base_url || cmd.apiBaseUrl;
+    const apiKeyEnv = payload.agent?.api_key_env || cmd.apiKeyEnv;
+    const modelKey = apiKeyEnv ? process.env[apiKeyEnv] : null;
+    if (!modelKey) {
+      const msg = `API agent: ${apiKeyEnv} is not set in the runner's environment`;
+      console.error(`  [${agentName}] ${msg}`);
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: msg });
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+      } catch { /* best effort */ }
+      clearInterval(killPollTimer);
+      return { outcome: "failed", eager };
+    }
+    const toolPermissions = payload.agent?.tool_permissions || null;
+    try {
+      const apiResult = await runApiAgent({
+        prompt,
+        apiBaseUrl,
+        apiKey: modelKey,
+        model: cmd.model,
+        toolPermissions,
+        harbour: { url, apiKey, agentId, runId, jobId: payload.job?.id || "" },
+        env: payload.env || {},
+        onLine: (line) => onLine(line.trimEnd()),
+        signal: killController.signal,
+        timeoutMs,
+      });
+      await flushEvents();
+      // decideApiFinish encapsulates the tool-permission matrix so the
+      // runner stays thin. See bin/lib/api-agent.mjs for the contract.
+      const decision = decideApiFinish({
+        apiResult,
+        toolPermissions: payload.agent?.tool_permissions || null,
+      });
+      if (decision.postContent) {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: decision.postContent });
+      }
+      if (decision.noteContent) {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: decision.noteContent });
+      }
+      if (decision.putStatus) {
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: decision.putStatus });
+      }
+      if (decision.reason !== "ok") {
+        console.log(`  [${agentName}] api-agent finish: ${decision.reason}`);
+      }
+      clearInterval(killPollTimer);
+      return { outcome: decision.putStatus || "done", eager };
+    } catch (err) {
+      clearInterval(killPollTimer);
+      console.error(`  [${agentName}] API agent failed: ${err.message}`);
+      try {
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: `API agent error: ${err.message}` });
+        await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
+      } catch { /* best effort */ }
+      return { outcome: "failed", eager };
+    }
+  }
+
   try {
     result = await runCliTool(cmd.binary, cmd.args, cmd.cwd, {
       timeoutMs,
       onLine,
       signal: killController.signal,
-      extraEnv: payload.env || {},
+      // Harbour-managed env vars are injected for *every* provider so scripts
+      // (Custom Shell especially) can call the Harbour API without extra
+      // wiring. Job-defined env vars override on conflict (last-wins).
+      extraEnv: {
+        HARBOUR_URL: url,
+        HARBOUR_API_KEY: apiKey,
+        HARBOUR_AGENT_ID: agentId,
+        HARBOUR_RUN_ID: runId,
+        HARBOUR_JOB_ID: payload.job?.id || "",
+        // Safe-mode PATH override: shim wrappers prepended. Set BEFORE
+        // job env vars so a deliberate PATH override in a job env var
+        // wins (the user might be doing something intentional).
+        ...(safePathOverride ? { PATH: safePathOverride } : {}),
+        ...(payload.env || {}),
+      },
+      stdinPayload: cmd.stdinPayload,
     });
   } catch (err) {
     clearInterval(killPollTimer);
@@ -588,12 +765,10 @@ async function processNextRun(runner) {
         const parsedLate = provider.parseResult(result.stdout, sessionId);
         const lateSessionId = parsedLate.sessionId || sessionId;
         if (lateSessionId) {
-          sessions[runId] = { sessionId: lateSessionId, cli };
-          saveSessions(sessions);
+          persistSession({ sessionId: lateSessionId, cli });
         }
       } else {
-        delete sessions[runId];
-        saveSessions(sessions);
+        clearSession();
       }
       // Race: agent finished before kill landed — report the actual final
       // status so eager mode can decide correctly (done/waiting/skipped → continue,
@@ -603,8 +778,7 @@ async function processNextRun(runner) {
       const parsedOnKill = provider.parseResult(result.stdout, sessionId);
       const killSessionId = parsedOnKill.sessionId || sessionId;
       if (killSessionId) {
-        sessions[runId] = { sessionId: killSessionId, cli };
-        saveSessions(sessions);
+        persistSession({ sessionId: killSessionId, cli });
         console.log(`  [${agentName}] Session saved for resume: ${killSessionId}`);
       } else {
         console.warn(`  [${agentName}] No session ID captured before kill — resume will start fresh`);
@@ -626,6 +800,20 @@ async function processNextRun(runner) {
   const parsed = provider.parseResult(result.stdout, sessionId);
   const output = parsed.content || result.stdout || result.stderr || "(no output)";
   const newSessionId = parsed.sessionId || sessionId;
+
+  // Best-effort: record AI usage cost. Never fail the run on cost recording.
+  if (parsed.usage && (parsed.usage.input_tokens > 0 || parsed.usage.output_tokens > 0)) {
+    try {
+      await apiCall(`${url}/api/runs/${runId}/cost`, apiKey, "POST", {
+        provider: parsed.usage.provider || cli,
+        model: parsed.usage.model || model,
+        input_tokens: parsed.usage.input_tokens,
+        output_tokens: parsed.usage.output_tokens,
+      });
+    } catch (err) {
+      console.error(`  [${agentName}] Failed to record cost: ${err.message}`);
+    }
+  }
 
   // Check if CLI exited with error
   if (result.code !== 0) {
@@ -665,13 +853,12 @@ async function processNextRun(runner) {
 
     try {
       await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
-        content: errorContent,
+        content: scrub(errorContent),
       });
       await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
     } catch { /* best effort */ }
 
-    delete sessions[runId];
-    saveSessions(sessions);
+    clearSession();
     return { outcome: "failed", eager };
   }
 
@@ -679,7 +866,7 @@ async function processNextRun(runner) {
   const truncatedOutput = output.length > 50000 ? output.slice(-50000) : output;
   try {
     await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", {
-      content: truncatedOutput,
+      content: scrub(truncatedOutput),
     });
   } catch (err) {
     console.error(`  [${agentName}] Failed to post activity: ${err.message}`);
@@ -707,11 +894,9 @@ async function processNextRun(runner) {
 
   // Save session for resume if waiting, clean up otherwise
   if (newSessionId && currentStatus === "waiting") {
-    sessions[runId] = { sessionId: newSessionId, cli };
-    saveSessions(sessions);
+    persistSession({ sessionId: newSessionId, cli });
   } else {
-    delete sessions[runId];
-    saveSessions(sessions);
+    clearSession();
   }
 
   console.log(`  [${agentName}] Run ${runId} completed with status: ${currentStatus}`);
@@ -719,18 +904,64 @@ async function processNextRun(runner) {
 }
 
 /**
- * Top-level driver for a single runner. Polls /next once per iteration; if the
+ * Top-level driver for a single runner.
+ *
+ * At max_concurrent_runs = 1 (default): polls /next once per iteration; if the
  * agent has eager polling enabled and the run finished cleanly (done/waiting/
  * skipped), immediately polls again instead of waiting for the next launchd
  * tick. Bails on no-work, poll errors, kills, and failures.
+ *
+ * At max_concurrent_runs > 1: keeps up to N runs in flight concurrently. The
+ * server's capacity-gate ensures we never claim more than max_concurrent_runs,
+ * so we can safely fire N parallel polls. On no-work, we drain in-flight runs
+ * and exit the cycle (launchd's next tick will fire another).
  */
 async function runSingleAgent(runner) {
-  for (let i = 0; i < EAGER_MAX_ITERATIONS; i++) {
-    const { outcome, eager } = await processNextRun(runner);
-    if (!shouldContinueEagerLoop(outcome, eager)) return;
-    console.log(`  [${runner.name}] Eager: continuing to next run (iter ${i + 1})...`);
+  const maxConcurrent = Math.max(1, Math.min(10, Number(runner.maxConcurrentRuns) || 1));
+
+  if (maxConcurrent === 1) {
+    for (let i = 0; i < EAGER_MAX_ITERATIONS; i++) {
+      const { outcome, eager } = await processNextRun(runner);
+      if (!shouldContinueEagerLoop(outcome, eager)) return;
+      console.log(`  [${runner.name}] Eager: continuing to next run (iter ${i + 1})...`);
+    }
+    console.warn(`  [${runner.name}] Hit eager iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`);
+    return;
   }
-  console.warn(`  [${runner.name}] Hit eager iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`);
+
+  // Concurrent mode: keep up to maxConcurrent runs in flight, refilling slots
+  // as each completes. Stop refilling on no-work / poll-error; let in-flight
+  // tasks complete naturally before returning.
+  let iter = 0;
+  let stopRefilling = false;
+  const inFlight = new Set();
+
+  const refill = () => {
+    while (inFlight.size < maxConcurrent && iter < EAGER_MAX_ITERATIONS && !stopRefilling) {
+      iter++;
+      // eslint-disable-next-line no-loop-func
+      const tracker = (async () => {
+        const result = await processNextRun(runner);
+        return result;
+      })();
+      inFlight.add(tracker);
+      tracker.finally(() => inFlight.delete(tracker));
+    }
+  };
+
+  refill();
+  while (inFlight.size > 0) {
+    const result = await Promise.race(inFlight);
+    // Promise.race returns the first to settle; the .finally above will have
+    // already removed it from inFlight by the time we get here.
+    if (result.outcome === "no-work" || result.outcome === "poll-error" || result.outcome === "failed" || result.outcome === "killed") {
+      stopRefilling = true;
+    }
+    if (!stopRefilling) refill();
+  }
+  if (iter >= EAGER_MAX_ITERATIONS) {
+    console.warn(`  [${runner.name}] Hit concurrent iteration cap (${EAGER_MAX_ITERATIONS}) — exiting cycle`);
+  }
 }
 
 async function runAgentlessWorkflows(url, apiKey) {
@@ -750,6 +981,7 @@ async function runAgentlessWorkflows(url, apiKey) {
   }
 
   const runId = payload.run.id;
+  const scrub = (text) => scrubSecrets(text, payload.env);
   console.log(`  [workflows] Starting run ${runId} (${payload.job?.name || "unnamed"})`);
 
   if (!payload.job?.workflow) {
@@ -795,7 +1027,7 @@ async function runAgentlessWorkflows(url, apiKey) {
     if (wfResult.code === 77) {
       console.log(`  [workflows] Workflow exited 77 — skipping`);
       if (wfResult.stderr?.trim()) {
-        try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: wfResult.stderr.trim() }); } catch { /* best effort */ }
+        try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: scrub(wfResult.stderr.trim()) }); } catch { /* best effort */ }
       }
       try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "skipped" }); } catch { /* best effort */ }
       return;
@@ -805,7 +1037,7 @@ async function runAgentlessWorkflows(url, apiKey) {
       console.error(`  [workflows] Workflow exited ${wfResult.code} — failed`);
       const errOutput = wfResult.stderr?.trim() || wfResult.stdout?.trim() || `Workflow exited with code ${wfResult.code}`;
       try {
-        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: errOutput });
+        await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: scrub(errOutput) });
         await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "failed" });
       } catch { /* best effort */ }
       return;
@@ -814,7 +1046,7 @@ async function runAgentlessWorkflows(url, apiKey) {
     // Exit 0 — success
     const output = wfResult.stdout?.trim();
     if (output) {
-      try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: output }); } catch { /* best effort */ }
+      try { await apiCall(`${url}/api/runs/${runId}/activity`, apiKey, "POST", { content: scrub(output) }); } catch { /* best effort */ }
     }
     try { await apiCall(`${url}/api/runs/${runId}/status`, apiKey, "PUT", { status: "done" }); } catch { /* best effort */ }
     console.log(`  [workflows] Run ${runId} completed.`);

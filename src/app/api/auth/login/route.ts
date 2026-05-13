@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateUser, createSession } from "@/lib/db/queries";
+import { authenticateUserAsync, createSessionAsync } from "@/lib/db/queries";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const user = authenticateUser(email, password);
+    const user = await authenticateUserAsync(email, password);
     if (!user) {
       return NextResponse.json(
         { error: "Invalid email or password" },
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const sessionId = createSession(user.id);
+    const sessionId = await createSessionAsync(user.id);
 
     const response = NextResponse.json({
       user: { id: user.id, email: user.email, displayName: user.display_name },

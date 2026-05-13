@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Briefcase, Bot, Calendar } from "lucide-react";
+import { Plus, Briefcase, Bot, Calendar, DollarSign } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 import { CreateDialog } from "@/components/app/create-dialog";
@@ -13,12 +13,14 @@ import { formatSchedule, parseSchedule } from "@/components/app/schedule-picker"
 import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
 import { Link2 } from "lucide-react";
+import { RoleGate } from "@/components/app/role-gate";
 
 type Job = {
   id: string; agent_id: string | null; agent_name: string | null; name: string;
   description: string | null; schedule: string;
   active: number; total_runs: number; skipped_runs: number; waiting_runs: number; pending_runs: number;
   last_run_at: number | null; workflow_command: string | null; workflow_only: number;
+  total_cost_usd: number | null;
 };
 
 export default function JobsPage() {
@@ -64,6 +66,9 @@ export default function JobsPage() {
                   )}
                   {(job.total_runs > 0 || job.skipped_runs > 0) && <span className="hidden sm:inline">{job.total_runs} runs{job.skipped_runs > 0 ? ` · ${job.skipped_runs} skipped` : ""}</span>}
                   {job.last_run_at && <span className="hidden sm:inline">Last run {timeAgo(job.last_run_at)}</span>}
+                  {!job.workflow_only && job.total_cost_usd != null && job.total_cost_usd > 0 && (
+                    <span className="hidden sm:inline-flex items-center gap-1"><DollarSign className="h-3 w-3" />${job.total_cost_usd.toFixed(2)}</span>
+                  )}
                 </div>
               </div>
               {(!job.active || job.waiting_runs > 0 || job.pending_runs > 0) && (
@@ -95,9 +100,11 @@ export default function JobsPage() {
               <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
             </Button>
           )}
-          <Button onClick={() => setShowCreate(true)} size="sm">
-            <Plus className="h-4 w-4 mr-1.5" /> New Job
-          </Button>
+          <RoleGate action="mutateJob">
+            <Button onClick={() => setShowCreate(true)} size="sm">
+              <Plus className="h-4 w-4 mr-1.5" /> New Job
+            </Button>
+          </RoleGate>
         </div>
       </div>
 

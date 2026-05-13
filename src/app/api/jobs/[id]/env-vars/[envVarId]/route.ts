@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
-import { unlinkEnvVarFromJob } from "@/lib/db/queries";
+import { withAuth, withOperator } from "@/lib/auth";
+import { unlinkEnvVarFromJobAsync } from "@/lib/db/queries";
 
-export const DELETE = withAuth(async (req, auth, { params }) => {
+export const DELETE = withOperator(async (req, auth, { params }) => {
   const { id, envVarId } = await params;
-  unlinkEnvVarFromJob(id, envVarId);
+  await unlinkEnvVarFromJobAsync(id, envVarId);
   return NextResponse.json({ ok: true });
 });

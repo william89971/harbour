@@ -1,22 +1,25 @@
 import { NextResponse } from "next/server";
-import { withUserAuth } from "@/lib/auth";
-import { listConversations, createConversation } from "@/lib/db/captain";
-import { getSetting } from "@/lib/db/settings";
+import { withUserAuth, withUserOperator, withOperator } from "@/lib/auth";
+import { listConversationsAsync, createConversationAsync } from "@/lib/db/captain";
+import { getSettingAsync } from "@/lib/db/settings";
 
 export const GET = withUserAuth(async (_req, auth) => {
-  const conversations = listConversations(auth.userId);
+  const conversations = await listConversationsAsync(auth.userId);
   return NextResponse.json(conversations);
 });
 
-export const POST = withUserAuth(async (req, auth) => {
+export const POST = withUserOperator(async (req, auth) => {
   const body = await req.json();
   const title = body.title || "New conversation";
 
-  const cli = getSetting("captain_cli") || "claude";
-  const model = getSetting("captain_model") || null;
-  const thinking = getSetting("captain_thinking") || null;
-  const cwd = getSetting("captain_cwd") || null;
+  const [cliSetting, model, thinking, cwd] = await Promise.all([
+    getSettingAsync("captain_cli"),
+    getSettingAsync("captain_model"),
+    getSettingAsync("captain_thinking"),
+    getSettingAsync("captain_cwd"),
+  ]);
+  const cli = cliSetting || "claude";
 
-  const conversation = createConversation(title, cli, model, thinking, cwd, auth.userId);
+  const conversation = await createConversationAsync(title, cli, model || null, thinking || null, cwd || null, auth.userId);
   return NextResponse.json(conversation, { status: 201 });
 });

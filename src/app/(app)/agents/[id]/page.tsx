@@ -16,15 +16,20 @@ import { BackLink } from "@/components/app/back-link";
 import { parseSchedule, formatSchedule } from "@/components/app/schedule-picker";
 import {
   Bot, Settings, Key, Copy, Check, Calendar, Activity, Wifi, FileText,
-  Briefcase, Trash2, Terminal, Cpu, Brain,
+  Briefcase, Trash2, Terminal, Cpu, Brain, DollarSign,
 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { RunStatusIcon } from "@/components/app/run-status";
 
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
+import { PermissionModeSelect, PermissionBadge, type PermissionMode } from "@/components/app/permission-mode-select";
+import { ToolPermissionsEditor } from "@/components/app/tool-permissions";
+import type { ToolPermissions } from "@/lib/db/agents";
+import { agentInfoRows } from "@/components/app/agent-info-rows";
+import { ShieldAlert } from "lucide-react";
 
-type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; eager: number | null; last_polled_at: number | null; created_at: number };
+type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; eager: number | null; permission_mode: PermissionMode; last_polled_at: number | null; created_at: number };
 type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; workflow_command: string | null; workflow_only: number };
 type Run = { id: string; status: string; job_name: string; created_at: number; completed_at: number | null };
 
@@ -73,6 +78,16 @@ export default function AgentDetailPage() {
     refetchInterval: 5000,
   });
 
+  const { data: usage } = useQuery<{ total_cost_usd: number; run_count: number; unknown_pricing_runs: number }>({
+    queryKey: ["agents", id, "usage"],
+    queryFn: async () => {
+      const res = await fetch(`/api/usage?by=agent&id=${id}`);
+      if (!res.ok) return { total_cost_usd: 0, run_count: 0, unknown_pricing_runs: 0 };
+      return res.json();
+    },
+    refetchInterval: 10000,
+  });
+
   const agent: Agent | null = agentData ?? null;
   const loading = agentLoading;
   const agentWaiting = Array.isArray(waitingData) ? waitingData.filter((r: any) => r.agent_id === id) : [];
@@ -87,6 +102,20 @@ export default function AgentDetailPage() {
   const [editModel, setEditModel] = useState("");
   const [editThinking, setEditThinking] = useState("");
   const [editEager, setEditEager] = useState(false);
+  const [editMaxConcurrent, setEditMaxConcurrent] = useState(1);
+  const [editShellCommand, setEditShellCommand] = useState("");
+  const [editShellCwd, setEditShellCwd] = useState("");
+  const [editPermissionMode, setEditPermissionMode] = useState<PermissionMode>("safe");
+  const [editApiBaseUrl, setEditApiBaseUrl] = useState("");
+  const [editApiKeyEnv, setEditApiKeyEnv] = useState("");
+  const [editToolPerms, setEditToolPerms] = useState<ToolPermissions>({
+    read_docs: true, write_docs: true,
+    read_databases: true, write_databases: true,
+    read_env_vars: true,
+    create_runs: true, create_handoffs: true,
+    post_activity: true, update_status: true,
+    use_shell: true,
+  });
   const [showRotateKey, setShowRotateKey] = useState(false);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -96,18 +125,41 @@ export default function AgentDetailPage() {
   const [connectCopied, setConnectCopied] = useState(false);
 
   async function handleUpdateAgent() {
-    const body: Record<string, string | boolean> = { name: editName, description: editDesc };
+    const body: Record<string, unknown> = { name: editName, description: editDesc };
     if (agent?.type === "harbour") {
       body.model = editModel;
       body.thinking = editThinking;
       body.eager = editEager;
+      body.permissionMode = editPermissionMode;
+      body.toolPermissions = editToolPerms;
+      if (agent.cli === "shell") {
+        if (!editShellCommand.trim()) {
+          alert("Custom Shell agents require a non-empty command.");
+          return;
+        }
+        body.shellCommand = editShellCommand.trim();
+        body.shellCwd = editShellCwd.trim() || null;
+      }
+      if (agent.cli === "api") {
+        if (!editApiBaseUrl.trim() || !editApiKeyEnv.trim()) {
+          alert("API agents require an apiBaseUrl and apiKeyEnv.");
+          return;
+        }
+        body.apiBaseUrl = editApiBaseUrl.trim();
+        body.apiKeyEnv = editApiKeyEnv.trim();
+      }
     }
+    body.maxConcurrentRuns = editMaxConcurrent;
     const res = await fetch(`/api/agents/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!res.ok) { alert("Failed to update agent"); return; }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Failed to update agent" }));
+      alert(err.error || "Failed to update agent");
+      return;
+    }
     setShowSettings(false);
     queryClient.invalidateQueries({ queryKey: ["agents"] });
   }
@@ -171,11 +223,12 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
             <Bot className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-semibold tracking-tight">{agent.name}</h1>
               {agent.type === "harbour" && agent.cli && (
                 <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{agent.cli}</span>
               )}
+              {agent.type === "harbour" && agent.permission_mode && <PermissionBadge mode={agent.permission_mode} />}
             </div>
             {agent.description && <p className="text-sm text-muted-foreground mt-0.5">{agent.description}</p>}
           </div>
@@ -196,29 +249,73 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
               <Wifi className="h-3.5 w-3.5" />
             </Button>
           ) : null}
-          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setEditEager(!!agent.eager); setShowSettings(true); }} title="Settings">
+          <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => { setEditName(agent.name); setEditDesc(agent.description || ""); setEditModel(agent.model || ""); setEditThinking(agent.thinking || ""); setEditEager(!!agent.eager); setEditMaxConcurrent(Math.max(1, Math.min(10, Number((agent as { max_concurrent_runs?: number }).max_concurrent_runs) || 1))); setEditShellCommand((agent as { shell_command?: string }).shell_command || ""); setEditShellCwd((agent as { shell_cwd?: string }).shell_cwd || ""); setEditPermissionMode((agent.permission_mode as PermissionMode) || "safe"); setEditApiBaseUrl((agent as { api_base_url?: string | null }).api_base_url || ""); setEditApiKeyEnv((agent as { api_key_env?: string | null }).api_key_env || ""); setEditToolPerms((agent as { tool_permissions?: ToolPermissions }).tool_permissions || editToolPerms); setShowSettings(true); }} title="Settings">
             <Settings className="h-3.5 w-3.5" />
           </Button>
         </div>
       </div>
+
+      {agent.type === "harbour" && agent.cli === "api" && (agent as { tool_permissions?: ToolPermissions }).tool_permissions?.update_status === false && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm flex items-start gap-3">
+          <ShieldAlert className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="font-medium text-amber-700 dark:text-amber-400">Cannot close runs</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              This API agent has the <code className="bg-muted px-1 rounded">update_status</code> tool disabled, so it cannot mark its runs as done. Runs will sit in &lsquo;running&rsquo; until the per-job timeout fires. Enable update_status in this agent&apos;s tool permissions to fix.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {agent.type === "harbour" && agent.cli === "claude" && agent.permission_mode === "unrestricted" && (
+        <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 px-4 py-3 text-sm flex items-start gap-3">
+          <ShieldAlert className="h-4 w-4 text-rose-600 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p className="font-medium text-rose-700 dark:text-rose-400">Unrestricted mode</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              This agent runs with <code className="bg-muted px-1 py-0.5 rounded">--dangerously-skip-permissions</code>. It can execute any command and read any file the runner can access. Switch to Safe mode to constrain it.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={async () => {
+              if (!confirm("Switch this agent to Safe mode? Harbour will write a default .claude/settings.json into its workspace on the next run.")) return;
+              const res = await fetch(`/api/agents/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ permissionMode: "safe" }),
+              });
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: "Failed to switch mode" }));
+                alert(err.error || "Failed to switch mode");
+                return;
+              }
+              queryClient.invalidateQueries({ queryKey: ["agents"] });
+            }}
+          >
+            Switch to Safe
+          </Button>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-3 gap-x-4 rounded-lg border p-3">
         <div className="flex items-center gap-2 text-sm">
           <Terminal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-muted-foreground truncate">{agent.type === "harbour" ? "Harbour" : "External"}</span>
         </div>
-        {agent.type === "harbour" && agent.model && (
-          <div className="flex items-center gap-2 text-sm">
-            <Cpu className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <span className="text-muted-foreground truncate">{agent.model}</span>
-          </div>
-        )}
-        {agent.type === "harbour" && agent.cli && (
-          <div className="flex items-center gap-2 text-sm">
-            <Brain className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <span className="text-muted-foreground truncate">{agent.thinking || "Default"}</span>
-          </div>
-        )}
+        {agentInfoRows(agent as { type: string; cli: string | null; model: string | null; thinking?: string | null; api_base_url?: string | null; api_key_env?: string | null }).map(row => {
+          const Icon = row.iconName === "model" ? Cpu
+            : row.iconName === "thinking" ? Brain
+            : row.iconName === "api-url" ? Wifi
+            : Key;
+          return (
+            <div key={row.key} className="flex items-center gap-2 text-sm" title={row.title}>
+              <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className={`text-muted-foreground truncate${row.monospace ? " font-mono text-xs" : ""}`}>{row.value}</span>
+            </div>
+          );
+        })}
         <div className="flex items-center gap-2 text-sm">
           <Briefcase className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-muted-foreground truncate">{jobs.length} {jobs.length === 1 ? "job" : "jobs"}</span>
@@ -230,6 +327,20 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
         <div className="flex items-center gap-2 text-sm">
           <Wifi className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-muted-foreground truncate">{agent.last_polled_at ? timeAgo(agent.last_polled_at) : "Never polled"}</span>
+        </div>
+        <div className="flex items-center gap-2 text-sm" title={
+          usage && usage.unknown_pricing_runs > 0
+            ? `${usage.unknown_pricing_runs} run(s) had unknown pricing`
+            : usage
+              ? `${usage.run_count} run(s) tracked`
+              : ""
+        }>
+          <DollarSign className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground truncate">
+            {usage && usage.run_count > 0
+              ? `$${Number(usage.total_cost_usd).toFixed(2)} total`
+              : "—"}
+          </span>
         </div>
       </div>
 
@@ -343,15 +454,69 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
               <Label>Description</Label>
               <Textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} rows={2} />
             </div>
-            {agent.type === "harbour" && agent.cli && CLI_CONFIG[agent.cli] && (
-              <ModelThinkingSelect
-                cli={agent.cli}
-                model={editModel}
-                thinking={editThinking}
-                onModelChange={setEditModel}
-                onThinkingChange={setEditThinking}
-                defaultThinkingLabel="Default"
-              />
+            {agent.type === "harbour" && agent.cli && agent.cli !== "shell" && agent.cli !== "api" && CLI_CONFIG[agent.cli] && (
+              <>
+                <ModelThinkingSelect
+                  cli={agent.cli}
+                  model={editModel}
+                  thinking={editThinking}
+                  onModelChange={setEditModel}
+                  onThinkingChange={setEditThinking}
+                  defaultThinkingLabel="Default"
+                />
+                <PermissionModeSelect
+                  cli={agent.cli}
+                  value={editPermissionMode}
+                  onChange={setEditPermissionMode}
+                />
+                <ToolPermissionsEditor cli={agent.cli} value={editToolPerms} onChange={setEditToolPerms} />
+              </>
+            )}
+            {agent.type === "harbour" && agent.cli === "api" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-api-base">API base URL</Label>
+                  <Input id="edit-api-base" value={editApiBaseUrl} onChange={e => setEditApiBaseUrl(e.target.value)} placeholder="https://api.deepseek.com/v1" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-api-model">Model</Label>
+                  <Input id="edit-api-model" value={editModel} onChange={e => setEditModel(e.target.value)} placeholder="deepseek-chat" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-api-key-env">API key env var</Label>
+                  <Input id="edit-api-key-env" value={editApiKeyEnv} onChange={e => setEditApiKeyEnv(e.target.value)} placeholder="DEEPSEEK_API_KEY" />
+                  <p className="text-xs text-muted-foreground">
+                    The runner reads this env var to authenticate. Harbour never stores the key itself.
+                  </p>
+                </div>
+                <PermissionModeSelect cli="api" value={editPermissionMode} onChange={setEditPermissionMode} />
+                <ToolPermissionsEditor cli="api" value={editToolPerms} onChange={setEditToolPerms} />
+              </>
+            )}
+            {agent.type === "harbour" && agent.cli === "shell" && (
+              <>
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 space-y-1">
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">⚠ Custom Shell agents run arbitrary commands</p>
+                  <p className="text-xs text-muted-foreground">
+                    The command below runs with the runner&apos;s full privileges. Harbour pipes each run&apos;s prompt to stdin and injects <code>HARBOUR_API_KEY</code> / <code>HARBOUR_URL</code> / <code>HARBOUR_RUN_ID</code> env vars.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-shell-cmd">Shell command<span className="text-rose-500 ml-1">*</span></Label>
+                  <Textarea
+                    id="edit-shell-cmd"
+                    value={editShellCommand}
+                    onChange={e => setEditShellCommand(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-shell-cwd">Working directory (optional)</Label>
+                  <Input id="edit-shell-cwd" value={editShellCwd} onChange={e => setEditShellCwd(e.target.value)} />
+                </div>
+                <PermissionModeSelect cli="shell" value={editPermissionMode} onChange={setEditPermissionMode} />
+                <ToolPermissionsEditor cli="shell" value={editToolPerms} onChange={setEditToolPerms} />
+              </>
             )}
             {agent.type === "harbour" && (
               <div className="rounded-md border p-3">
@@ -371,6 +536,34 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
                 </label>
               </div>
             )}
+            <div className="rounded-md border p-3 space-y-2">
+              <Label className="text-sm font-medium" htmlFor="max-concurrent-runs">Max concurrent runs</Label>
+              <div className="flex items-center gap-3">
+                <Input
+                  id="max-concurrent-runs"
+                  type="number"
+                  min={1}
+                  max={10}
+                  step={1}
+                  value={editMaxConcurrent}
+                  onChange={e => {
+                    const n = parseInt(e.target.value, 10);
+                    if (Number.isFinite(n)) setEditMaxConcurrent(Math.max(1, Math.min(10, n)));
+                  }}
+                  className="w-20"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {editMaxConcurrent === 1
+                    ? "Default — one run at a time."
+                    : `Up to ${editMaxConcurrent} runs may execute in parallel. Each gets its own working directory.`}
+                </p>
+              </div>
+              {editMaxConcurrent > 1 && agent.type === "harbour" && agent.cli === "claude" && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  ⚠ Coding agents (Claude Code, Codex) writing to the same repo can collide. Keep at 1 for repo-modifying agents unless each run targets a different directory.
+                </p>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="destructive" onClick={handleDeleteAgent} className="mr-auto"><Trash2 className="h-4 w-4 mr-1" /> Delete</Button>

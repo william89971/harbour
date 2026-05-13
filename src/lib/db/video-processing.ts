@@ -1,5 +1,6 @@
 import { v4 as uuid } from "uuid";
-import { getDb } from "./schema";
+import { getDb, getDbAsync } from "./schema";
+import type { SqlParam } from "./adapter";
 
 export type ProcessingStatus = "queued" | "processing" | "done" | "failed";
 
@@ -96,4 +97,67 @@ export function updateProcessingStatus(
 export function deleteProcessingRecord(id: string): void {
   const db = getDb();
   db.prepare(`DELETE FROM attachment_processing WHERE id = ?`).run(id);
+}
+
+// ---------------------------------------------------------------------------
+// Async variants — cross-backend (SQLite + Postgres) via the adapter layer.
+// ---------------------------------------------------------------------------
+
+export async function createProcessingRecordAsync(attachmentId: string, runId: string, screenshotInterval: number): Promise<AttachmentProcessing> {
+  const db = await getDbAsync();
+  const id = uuid();
+  await db.run(
+    `INSERT INTO attachment_processing (id, attachment_id, run_id, status, screenshot_interval) VALUES (?, ?, ?, 'queued', ?)`,
+    [id, attachmentId, runId, screenshotInterval],
+  );
+  const row = await getProcessingByAttachmentAsync(attachmentId);
+  return row!;
+}
+
+export async function getProcessingByAttachmentAsync(attachmentId: string): Promise<AttachmentProcessing | null> {
+  const db = await getDbAsync();
+  return db.get<AttachmentProcessing>(`SELECT * FROM attachment_processing WHERE attachment_id = ?`, [attachmentId]);
+}
+
+export async function getProcessingByIdAsync(id: string): Promise<AttachmentProcessing | null> {
+  const db = await getDbAsync();
+  return db.get<AttachmentProcessing>(`SELECT * FROM attachment_processing WHERE id = ?`, [id]);
+}
+
+export async function listProcessingByRunAsync(runId: string): Promise<AttachmentProcessing[]> {
+  const db = await getDbAsync();
+  return db.all<AttachmentProcessing>(`SELECT * FROM attachment_processing WHERE run_id = ? ORDER BY created_at ASC`, [runId]);
+}
+
+export async function updateProcessingStatusAsync(
+  id: string,
+  status: ProcessingStatus,
+  extra?: {
+    transcript_path?: string;
+    screenshots_dir?: string;
+    screenshot_count?: number;
+    duration_seconds?: number;
+    error?: string;
+  },
+): Promise<void> {
+  const db = await getDbAsync();
+  const now = Math.floor(Date.now() / 1000);
+  const sets: string[] = ["status = ?"];
+  const params: SqlParam[] = [status];
+
+  if (status === "processing") { sets.push("started_at = ?"); params.push(now); }
+  if (status === "done" || status === "failed") { sets.push("completed_at = ?"); params.push(now); }
+  if (extra?.transcript_path !== undefined) { sets.push("transcript_path = ?"); params.push(extra.transcript_path); }
+  if (extra?.screenshots_dir !== undefined) { sets.push("screenshots_dir = ?"); params.push(extra.screenshots_dir); }
+  if (extra?.screenshot_count !== undefined) { sets.push("screenshot_count = ?"); params.push(extra.screenshot_count); }
+  if (extra?.duration_seconds !== undefined) { sets.push("duration_seconds = ?"); params.push(extra.duration_seconds); }
+  if (extra?.error !== undefined) { sets.push("error = ?"); params.push(extra.error); }
+
+  params.push(id);
+  await db.run(`UPDATE attachment_processing SET ${sets.join(", ")} WHERE id = ?`, params);
+}
+
+export async function deleteProcessingRecordAsync(id: string): Promise<void> {
+  const db = await getDbAsync();
+  await db.run(`DELETE FROM attachment_processing WHERE id = ?`, [id]);
 }

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
-import { getDatabaseById, addColumn } from "@/lib/db/queries";
+import { withAuth, withOperator } from "@/lib/auth";
+import { getDatabaseByIdAsync, addColumnAsync } from "@/lib/db/queries";
 
-export const POST = withAuth(async (req, auth, { params }) => {
+export const POST = withOperator(async (req, auth, { params }) => {
   const { id } = await params;
-  const db = getDatabaseById(id);
+  const db = await getDatabaseByIdAsync(id);
   if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
 
   const body = await req.json();
@@ -13,9 +13,9 @@ export const POST = withAuth(async (req, auth, { params }) => {
   }
 
   try {
-    const updated = addColumn(id, body);
+    const updated = await addColumnAsync(id, body);
     return NextResponse.json(updated);
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+  } catch (error) {
+    return NextResponse.json({ error: (error as Error).message }, { status: 400 });
   }
 });

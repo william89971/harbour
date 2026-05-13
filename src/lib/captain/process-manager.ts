@@ -69,9 +69,18 @@ export async function spawn(opts: {
   const abortController = new AbortController();
   const provider = await getProvider(opts.cli);
 
-  // Resolve working directory
-  const defaultCwd = path.join(harbourHome(), "captain");
-  const cwd = opts.cwd || defaultCwd;
+  // Resolve working directory. The cwd is admin-writable via the captain_cwd
+  // setting, so we constrain it to the HARBOUR_HOME subtree as defense in
+  // depth — a misconfigured setting (or a compromised admin) should not be
+  // able to make Captain spawn CLI processes in /etc, /var/www, etc., or
+  // write CLAUDE.md into arbitrary system directories via setupWorkspace.
+  const home = path.resolve(harbourHome());
+  const defaultCwd = path.join(home, "captain");
+  const requested = path.resolve(opts.cwd || defaultCwd);
+  if (requested !== home && !requested.startsWith(home + path.sep)) {
+    throw new Error(`captain cwd must be under HARBOUR_HOME (${home}); got ${requested}`);
+  }
+  const cwd = requested;
   ensureDir(cwd);
   setupWorkspace(cwd);
 

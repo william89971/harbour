@@ -1,7 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
-import { listUsers } from "@/lib/db/queries";
+import { NextResponse } from "next/server";
+// User-only: the user list is operator/admin tooling, not part of the agent
+// contract. With bare withAuth, any agent Bearer token could enumerate users.
+import { withUserAuth } from "@/lib/auth";
+import { listUsersAsync } from "@/lib/db/queries";
 
-export const GET = withAuth(async () => {
-  return NextResponse.json(listUsers());
+export const GET = withUserAuth(async () => {
+  return NextResponse.json(await listUsersAsync());
 });

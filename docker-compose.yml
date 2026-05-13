@@ -9,8 +9,29 @@ services:
       - "3030:3000"
     environment:
       HARBOUR_HOME: /data
+      # Optional: point at a Postgres backend instead of the bundled SQLite
+      # file. Compose interpolates from your shell env; unset means SQLite.
+      # Example: DATABASE_URL=postgres://harbour:harbour@postgres:5432/harbour
+      DATABASE_URL: ${DATABASE_URL:-}
     volumes:
       - ./data:/data
+
+  # Optional Postgres backend. Activate with: docker compose --profile postgres up -d
+  # Combine with DATABASE_URL=postgres://harbour:harbour@postgres:5432/harbour to
+  # point the harbour service at it.
+  postgres:
+    image: postgres:16-alpine
+    container_name: harbour-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: harbour
+      POSTGRES_USER: harbour
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-harbour}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    profiles: ["postgres"]
 
   # Simulated remote worker — same repo, different entrypoint. Exists so the
   # remote-runner flow can be validated without a second physical machine.

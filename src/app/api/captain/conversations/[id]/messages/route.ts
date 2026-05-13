@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
-import { withUserAuth } from "@/lib/auth";
-import { getConversation, createMessage } from "@/lib/db/captain";
+import { withUserAuth, withUserOperator, withOperator } from "@/lib/auth";
+import { getConversationAsync, createMessageAsync } from "@/lib/db/captain";
 import { isRunning, spawn } from "@/lib/captain/process-manager";
 
-export const POST = withUserAuth(async (req, auth, { params }) => {
+export const POST = withUserOperator(async (req, auth, { params }) => {
   const { id } = await params;
-  const conversation = getConversation(id);
+  const conversation = await getConversationAsync(id);
   if (!conversation || conversation.user_id !== auth.userId) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -25,10 +25,10 @@ export const POST = withUserAuth(async (req, auth, { params }) => {
   }
 
   // Store user message
-  const userMessage = createMessage(id, "user", prompt);
+  const userMessage = await createMessageAsync(id, "user", prompt);
 
   // Create placeholder assistant message
-  const assistantMessage = createMessage(id, "assistant", "");
+  const assistantMessage = await createMessageAsync(id, "assistant", "");
 
   // Determine session state
   const isNewSession = !conversation.session_id;

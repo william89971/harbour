@@ -13,6 +13,7 @@ import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
+import { RoleGate } from "@/components/app/role-gate";
 
 type Doc = { id: string; title: string; pinned: number; updated_at: number };
 
@@ -80,7 +81,9 @@ export default function DocsPage() {
               <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
             </Button>
           )}
-          <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Doc</Button>
+          <RoleGate action="mutateDoc">
+            <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Doc</Button>
+          </RoleGate>
         </div>
       </div>
 

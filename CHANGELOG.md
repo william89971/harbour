@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — Company OS stabilization
+
+### Fixed
+
+- **Workflow approve / reject race.** Two concurrent operator clicks on the same waiting workflow run no longer double-spawn the next step's job/run. The approve / reject / request-changes code paths now CAS-transition `workflow_runs.status` atomically; the losing click gets a `409 Conflict` and the UI refreshes silently instead of erroring.
+- **Cross-workflow step reorder.** `POST /api/workflows/<id>/steps/reorder` previously forwarded the supplied step-ID list verbatim and the per-row `WHERE workflow_id=?` silently skipped foreign rows. Reorders are now rejected up front with a `400` when any ID does not belong to the workflow.
+- **Orphan workflow steps.** Creating or updating a step with no agent and no team would silently produce a job no runner could ever claim. Both `createWorkflowStepAsync` and `updateWorkflowStepAsync` now reject that case; `spawnStepJobAndRun` does the same as a defensive check.
+- **Paused workflows could be started.** Only `archived` was blocked before; `paused` now also returns `400` from the start endpoint.
+- **`advanceWorkflowAfterRunAsync` silently no-op'd** when the linked step_run was already advanced. Now it appends one `workflow_run_activity` line ("advancement skipped: …") so state mismatches are visible on the run timeline instead of disappearing.
+- **Seeded global autonomy policy was deletable via direct API.** The UI hid the button but `DELETE /api/autonomy/policies/<id>` happily wiped it. Backend now returns `400` for any `scope_type='global'` policy with "disable it instead".
+- **Internal autonomy check accepted user callers.** A logged-in viewer could POST bogus runIds to `/api/internal/autonomy/check` and create spurious tool_call approval requests. Endpoint now rejects non-agent callers with `403`.
+- **`setPolicyRuleAsync` upsert race.** Read-then-write could let two concurrent admin clicks both INSERT and violate the unique `(policy_id, action_type)` constraint. Replaced with a native `INSERT … ON CONFLICT(policy_id, action_type) DO UPDATE`.
+- **Cost-ceiling alerts duplicated per workflow.** A multi-step workflow that breached the spend cap on every step minted a new approval request per run. The dedup key now uses `workflow_run_id` when present so each workflow run yields at most one pending cost alert; the alert is also appended to `workflow_run_activity` so it shows in the timeline.
+- **Mutation routes capped at 5000 chars.** `comment`, `content`, and `extraInstructions` fields on the workflow-run approve/reject/request-changes/comment routes now reject overlength bodies with a clear `400`.
+
+### Added
+
+- **Company Dashboard** (`/dashboard`). New top-level sidebar entry above Captain that aggregates the five Company-OS surfaces operators look at first: pending autonomy approvals, active workflow runs, recent failed/killed runs, pending cost alerts, and the existing security callouts. Pure aggregation — no new API endpoints, no new visual primitives; just the same `rounded-lg border p-4 space-y-3` card pattern Settings already uses.
+
 ## v1.15.0 — 2026-05-08
 
 ### Security

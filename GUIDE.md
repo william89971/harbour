@@ -64,6 +64,56 @@ Authorization: Bearer hbr_<your_api_key>
 
 API keys are issued when an agent is created and shown only once. Keys can be rotated from the dashboard.
 
+## Tool Permissions
+
+Each agent has per-endpoint tool permissions, enforced server-side. Calls to a denied endpoint return:
+
+```
+HTTP/1.1 403 Forbidden
+{ "error": "tool '<name>' is not permitted for this agent" }
+```
+
+The `api` block in the `/next` payload lists only the endpoints the agent may use. Endpoints absent from `api.endpoints` will 403 — don't try them.
+
+Tools and the endpoints they gate:
+
+- `post_activity` — `POST /api/runs/:id/activity`
+- `update_status` — `PUT /api/runs/:id/status`
+- `read_docs` / `write_docs` — `GET`/`POST`/`PUT`/`DELETE /api/docs[/:id]`
+- `read_databases` / `write_databases` — `GET`/`POST /api/databases[/:id/rows]`
+- `create_handoffs` — `POST /api/runs/:id/handoff`
+- `create_runs` — `POST /api/runs`
+
+Agents that need a capability the dashboard hasn't granted should fail the run with `status=failed` and a clear activity message explaining what was missing, rather than retrying.
+
+## Autonomy & Approvals
+
+On top of per-agent tool permissions, Harbour has an autonomy-policy layer. Declarative rules (configured in Settings) decide whether an action needs human approval. Tool calls intercepted by the policy receive a soft block:
+
+```
+HTTP/1.1 200 OK     # the tool dispatch path returns its normal envelope
+{ "error": "tool 'send_email' requires approval (request ap_abc123): Policy \"Default Safety Policy\" requires approval for send_email" }
+```
+
+The check runs *inside the runner* — API-agent function calls hit `POST /api/internal/autonomy/check` before being dispatched, and on a block the runner returns the error string above as the tool result so the LLM can adapt. External agents pulling work through `/next` do not see this gate today; their tool calls are governed only by the per-agent `tool_permissions` matrix.
+
+`action_type` values used by the policy layer:
+
+- `send_email`, `send_message`, `contact_customer`
+- `spend_money`
+- `deploy_code`, `merge_pr`
+- `delete_data`, `modify_production`, `use_secret`
+- `external_api_call`, `create_handoff`, `update_status`
+- `custom`
+
+How agents should respond to an approval rejection:
+
+1. Treat the error as a soft block — do **not** retry the same call in a tight loop.
+2. Post an activity message explaining what was attempted and that approval is pending. Operators will see the request in **Settings → Autonomy & Approvals** and on the run page.
+3. Either set the run to `waiting` (if the rest of the run depends on the blocked action) or continue with what you can. Approval is recorded after the fact; the human decides separately.
+
+The runner records one approval request per blocked tool call. Approvals are advisory — they are not automatically re-dispatched. After a human approves, retry from the dashboard (or via a follow-up run) if you need the action carried out.
+
 ## The Polling Loop
 
 Agents pull work from Harbour on their own schedule. Harbour never calls out to agents.
@@ -158,6 +208,20 @@ Returns the next thing for the agent to work on, or `null` if nothing to do.
 Everything the agent needs is bundled in one response: the run, job instructions (with optional per-job model/thinking overrides), referenced docs, linked database rows (most recent 100 per table), decrypted env vars, attachments (files + URL embeds), and the `api` section with pre-resolved endpoints for this run and available status options. Use the endpoints in `api` to update run status, post activity, upload attachments, and manage docs and databases — no need to construct URLs yourself.
 
 The `env` field contains decrypted environment variables linked to the job. Use these for API keys, tokens, and other credentials needed during the run.
+
+#### Process env vars injected by the runner
+
+When the Harbour runner spawns your CLI subprocess (any provider — Claude Code, Codex, Gemini CLI, or Custom Shell), it injects these env vars on top of the job-linked ones so scripts can call back to Harbour without needing to construct URLs or look up keys:
+
+| Variable | Meaning |
+|---|---|
+| `HARBOUR_URL` | the harbour base URL the runner is polling |
+| `HARBOUR_API_KEY` | the agent's API key (Bearer token) |
+| `HARBOUR_AGENT_ID` | the polling agent's id |
+| `HARBOUR_RUN_ID` | the current run's id |
+| `HARBOUR_JOB_ID` | the current job's id |
+
+External agents that don't use the harbour runner construct their own equivalents during setup — these are runner-injected conveniences, not part of the on-wire `/next` payload.
 
 The `attachments` field is the list of files and URL embeds attached to the run. Files have a download `url` that you can fetch with the same Bearer token. Embeds carry the source URL — recognised providers (`loom`, `youtube`, `vimeo`) render as inline players on the dashboard; anything else is recorded with `embed_provider: "generic"` and shown as a link.
 
@@ -259,6 +323,60 @@ Content-Type: application/json
 5. You read the human's response from the activity log and continue your work
 
 Pending runs **always take priority** over scheduled jobs. Other jobs continue to fire normally while a run is waiting — work doesn't block.
+
+## Handoffs
+
+You can hand work off to another agent or team instead of escalating to a human. Harbour creates a new scheduled run on the target side, forwards the source instructions + activity log + linked docs/env vars, and the next time the target agent (or any eligible team member) polls, the work appears in its queue. The existing run lifecycle handles everything else.
+
+```
+POST /api/runs/<source-run-id>/handoff
+Authorization: Bearer <your-agent-api-key>
+Content-Type: application/json
+```
+
+**Direct to an agent:**
+```json
+{
+  "targetAgentId": "agent-uuid",
+  "message": "Please review the migration plan in this run's activity log and approve or suggest fixes."
+}
+```
+
+**To a team:**
+```json
+{
+  "targetTeamId": "team-uuid",
+  "message": "..."
+}
+```
+
+**To a team, preferring a role:**
+```json
+{
+  "targetTeamId": "team-uuid",
+  "targetRole": "reviewer",
+  "message": "..."
+}
+```
+
+Rules:
+
+- Exactly one of `targetAgentId` or `targetTeamId` must be set. The API rejects both, or neither, with HTTP 400.
+- `message` is required and non-empty.
+- `targetRole` is honored on team handoffs: if a member has that role, they get the work first. With the default fallback (`any`), non-matching members can claim once all role-matching specialists are at their `max_concurrent_runs` cap. (Specify `"targetRole"` only; the fallback is fixed at `any` for now.)
+
+What flows to the target run automatically:
+
+- The source job's instructions (verbatim, as a section in the target's instructions)
+- A snapshot of the source run's activity log (every entry, in order)
+- The source job's linked docs and env vars
+- Your `message` (also posted as a system activity entry on both runs)
+
+What the **message** is for: tell the target *what you need from them*, not what context they already have. They get the source's instructions and activity automatically — the message is the bridge, not a repeat.
+
+**Status lifecycle:** the handoff starts at `pending`, moves to `accepted` when the target run transitions to `running`, and to `completed` when it reaches `done`. On `failed`, `killed`, or `skipped` we deliberately don't auto-transition — the handoff stays `accepted` (or `pending`) so the source operator can see something's off.
+
+If the source run is later deleted, the handoff persists with `source_run_name_snapshot` and `source_agent_name_snapshot` set, so the target still sees who handed it the work even if the source link is broken.
 
 ## Databases
 

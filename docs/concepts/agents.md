@@ -27,7 +27,7 @@ Agents are stored in a single `agents` row with these columns (skipping plumbing
 | `name` | Human label, also used to slugify the harbour workspace dir |
 | `description` | Free-form note (shown in the dashboard, not sent to the CLI) |
 | `type` | `external` or `harbour` |
-| `cli` | `claude`, `codex`, or `gemini` (harbour only) |
+| `cli` | `claude`, `codex`, `gemini`, or `shell` (harbour only) |
 | `model` | Default model for this agent (e.g. `sonnet`, `gpt-5-codex`) |
 | `thinking` | Default reasoning effort (`low`/`medium`/`high`, or provider-specific) |
 | `remote` | `1` if the runner runs on a different machine; harbour skips writing local runner config |
@@ -94,11 +94,16 @@ The three built-in CLIs each have their own command shape. From `bin/lib/provide
 
 | CLI | Binary | Key flags | Resume mechanism |
 |---|---|---|---|
-| Claude Code | `claude` | `-p --output-format stream-json --verbose --include-partial-messages` (plus `--dangerously-skip-permissions` unless the workspace has a valid `.claude/settings.json` — see [Per-agent permissions](#per-agent-permissions-claude-code)) | `--session-id <uuid>` (new) or `--resume <uuid>` |
+| Claude Code | `claude` | `-p --output-format stream-json --verbose --include-partial-messages` (plus `--dangerously-skip-permissions` in unrestricted mode only — see [Permission modes](#permission-modes-claude-code)) | `--session-id <uuid>` (new) or `--resume <uuid>` |
 | Codex | `codex` | `exec --dangerously-bypass-approvals-and-sandbox --json` | `exec resume <thread_id>` |
 | Gemini CLI | `gemini` | `--prompt <p> --yolo --skip-trust -o stream-json` | `--resume <session_id>` |
+| Custom Shell | `sh` | `-c <user-supplied command>`; the run's prompt is piped to stdin | no resume |
 
 Model selection: Claude uses `--model`, Codex and Gemini use `-m`. Thinking/reasoning depth: Claude uses `--effort <level>`, Codex uses `-c model_reasoning_effort=<level>` (the top-level `--reasoning-effort` flag was removed in Codex 0.128). Gemini dropped its `--thinking` flag in 0.40 — reasoning depth is controlled by model selection now, so the dashboard hides the thinking selector for Gemini agents. The runner picks the per-job override if set, otherwise the agent default; it just passes the string through, so what's accepted depends on the underlying tool.
+
+**Custom Shell Agent.** When `cli = "shell"`, the runner spawns `sh -c '<user command>'` instead of a known binary. The full run prompt (instructions + docs + db + extras) is piped to stdin. There's no JSONL streaming format — every stdout line becomes a `text_delta` event in the activity log. Non-zero exit fails the run. The user's script is responsible for calling the Harbour API to set a terminal status; if it forgets, the runner's failsafe marks the run failed. See [README → Custom Shell Agent](../../README.md#custom-shell-agent) for the env vars and an example script.
+
+The provider contract is documented at the top of [`bin/lib/providers.mjs`](../../bin/lib/providers.mjs). To add a fifth provider, follow the four existing ones: `id`, `displayName`, `supportedModels`, `supportedThinking`, `checkAvailable`, `buildCommand`, optional `parseLine`/`createParser`, `parseResult`, optional `generateSessionId`.
 
 For Claude only, the runner pre-generates a session UUID before spawning so `PUT /api/runs/:id/session` can record the session ID up front — that lets the dashboard surface the session even while the CLI is still booting.
 
@@ -110,23 +115,62 @@ The workspace path defaults to `<HARBOUR_HOME>/workspaces/...` — set `HARBOUR_
 
 The runner also layers two workspace-derived things onto each spawn: any job-linked env vars (`payload.env`) are merged into the spawned process environment so the agent's shell can expand `$VAR` natively (rather than the LLM emitting the secret as text), and if the workspace has a `bin/` directory it's prepended to PATH so per-agent wrapper scripts resolve as bare command names. Both behaviors are no-ops when there are no env vars / no `bin/`.
 
-### Per-agent permissions (Claude Code)
+### Permission modes
 
-By default the runner invokes Claude Code with `--dangerously-skip-permissions` — the permission system can't run interactively under `-p`, and refusing every tool call would deadlock the agent. The flag is the price of headless operation, but it also disables `.claude/settings.json` allow/deny rules entirely.
+Each harbour agent has a `permission_mode` column: `safe`, `custom`, or `unrestricted`. What each mode enforces depends on the provider:
 
-If a Claude Code agent's workspace contains a valid `.claude/settings.json` — a regular file (not a symlink), non-empty, parseable JSON, with a `permissions` object — the runner drops `--dangerously-skip-permissions` and lets the permission system run. This is the per-agent opt-in: agents without a settings file see the legacy unrestricted behavior, agents with one are scoped to whatever their settings allow.
+| Provider | Native permissions | Safe-mode mechanism |
+|---|---|---|
+| Claude Code | `.claude/settings.json` allow/deny + hooks | Harbour writes a default deny-list `settings.json` and Claude enforces it |
+| Codex / Gemini / Shell | None | Harbour-level **soft sandbox**: PATH-shim wrappers block `rm`, `sudo`, `chmod`, `chown`, `ssh`, `scp`, `curl -H Authorization:*` |
+| API agent | No shell | Function-calling spec filtered by per-agent tool permissions |
 
-Detection is conservative on purpose. A symlink to `/dev/null`, a zero-byte placeholder, or a corrupt/half-written JSON file all fall back to the legacy mode rather than silently switching the agent into a less-protected configuration. The probe is in `bin/lib/providers.mjs`.
+New Claude and API agents default to `safe`. Codex/Gemini/Shell default to `unrestricted` (the soft sandbox is opt-in because it's best-effort). Existing migrated agents stay on `unrestricted`.
 
-Effective `settings.json` for headless agents:
+| Mode | Flag added by runner | settings.json |
+| --- | --- | --- |
+| `safe` | (none) | Harbour writes a default deny-list `.claude/settings.json` on first run if absent. Idempotent — never overwrites. |
+| `custom` | (none) | You supply `.claude/settings.json`. Runner refuses to start the run if it's missing or invalid. |
+| `unrestricted` | `--dangerously-skip-permissions` | Ignored. |
 
-- `permissions.defaultMode: "dontAsk"` so unrecognized tool calls are auto-denied. The default `"default"` mode would block waiting for an interactive prompt that has no UI.
-- `deny` rules win over `allow` rules — make deny-list mistakes safe.
-- `Bash(...)` patterns match the literal command string, so URL filtering inside `curl` is fragile (the URL position depends on flag order). Do argument-level checks in a `PreToolUse` hook under `.claude/hooks/`.
+The runner reads the mode from the `/next` payload (`payload.agent.permission_mode`) so dashboard changes take effect on the next poll without restarting the runner. There is no silent fallback: a safe/custom-mode run with a missing or malformed `settings.json` fails cleanly with the error written to the run's activity log.
 
-This works well together with the workspace `bin/` PATH injection above: per-agent wrapper scripts (e.g. an `auth-curl` shim that internally reads env vars and execs `curl`) keep `$VAR` references out of the LLM-emitted command, where `dontAsk` mode would otherwise auto-deny them.
+The bundled safe-mode `settings.json` (defined in `bin/lib/safe-settings.mjs`) denies dangerous bash commands (`rm -rf`, `sudo`, `chmod`, `chown`, `ssh`, `scp`, `curl` with `Authorization` headers) and reads of sensitive files (`.env*`, `~/.ssh/**`, `~/.harbour/encryption.key`, `runners.json`, `harbour.db`). `permissions.defaultMode` is `"dontAsk"` so anything outside the allow-list is auto-denied — required for headless `-p` runs.
 
-Codex and Gemini ship with their own bypass flags (`--dangerously-bypass-approvals-and-sandbox` and `--yolo --skip-trust`); the per-workspace opt-in is Claude-only today.
+Validation rules (mirrored in `src/lib/claude-settings.ts` for the server, `bin/lib/safe-settings.mjs` for the runner): the file must be a regular file (not a symlink), non-empty, parseable JSON, with a top-level `permissions` object. Anything else is "invalid", surfaced both in the dashboard's **Settings → Security** panel and as a runner-time error.
+
+Codex and Gemini still ship with their own bypass flags (`--dangerously-bypass-approvals-and-sandbox` and `--yolo --skip-trust`) — those are passed in every mode, since dropping them just makes the CLI hang on an approval prompt that has no UI. Harbour-level safe mode for these providers installs shim scripts at `~/.harbour/safe-shims/` (see `bin/lib/safe-shims.mjs`) and prepends them to PATH. Shim wrappers exit non-zero on `rm`, `sudo`, `chmod`, `chown`, `ssh`, `scp`, and on `curl` calls carrying an `Authorization` header. **This is a soft sandbox** — an LLM that calls `/bin/rm` by absolute path or shells through Python can still escape.
+
+### API agents
+
+API agents (`cli: "api"`) drive a function-calling loop against an OpenAI-compatible `chat/completions` endpoint (DeepSeek, Kimi, OpenAI, anything that speaks the same wire format). The runtime lives in `bin/lib/api-agent.mjs`:
+
+1. The runner detects `cli="api"` and calls `runApiAgent()` instead of spawning a subprocess.
+2. The model API key is read from the env var named in `agents.api_key_env` (never stored in the DB).
+3. The tool spec exposed to the model is filtered by the agent's tool permissions. The model can call: `post_activity`, `read_doc` / `list_docs` / `write_doc`, `read_database_rows` / `insert_database_rows`, `read_env_var`, `create_handoff`, and `finish`. No shell tool exists.
+4. Each tool call dispatches to the corresponding Harbour HTTP endpoint (or, for `read_env_var`, reads from the runner's injected job env).
+5. The loop exits when the model calls `finish` or hits the 25-iteration cap.
+
+Streaming events (`text_delta`, `tool_start`, `tool_end`, `info`) flow through the same path as CLI providers, so the dashboard renders API-agent runs identically.
+
+### Tool permissions
+
+Ten per-endpoint flags live as `can_*` columns on the agents table and are enforced server-side via `requireTool(auth, "<name>")` in `src/lib/tool-permissions.ts`. A denied call returns `403 { error: "tool '<name>' is not permitted for this agent" }`. The flags also gate which functions are advertised in the API agent's tool spec.
+
+| Tool | Endpoint(s) gated |
+|---|---|
+| `read_docs` | `GET /api/docs[/:id]` |
+| `write_docs` | `POST/PUT/DELETE /api/docs[/:id]` |
+| `read_databases` | `GET /api/databases[/:id/rows]` |
+| `write_databases` | `POST /api/databases`, `POST /api/databases/:id/rows` |
+| `read_env_vars` | API-agent only (reads job env from inside the agent process) |
+| `create_runs` | `POST /api/runs` |
+| `create_handoffs` | `POST /api/runs/:id/handoff` |
+| `post_activity` | `POST /api/runs/:id/activity` |
+| `update_status` | `PUT /api/runs/:id/status` |
+| `use_shell` | Informational (shell-capable providers; api agents always have it off) |
+
+Existing agents migrate with every flag = 1 (no behavior change). New agents pick defaults by mode + cli: safe mode grants the minimum useful set, custom/unrestricted grant everything.
 
 ### Streaming and kill
 

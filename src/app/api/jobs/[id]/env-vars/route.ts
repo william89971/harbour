@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
-import { getJobById, linkEnvVarToJob } from "@/lib/db/queries";
+import { withAuth, withOperator } from "@/lib/auth";
+import { getJobByIdAsync, linkEnvVarToJobAsync } from "@/lib/db/queries";
 
-export const POST = withAuth(async (req, auth, { params }) => {
+export const POST = withOperator(async (req, auth, { params }) => {
   const { id } = await params;
-  const job = getJobById(id);
+  const job = await getJobByIdAsync(id);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
   const body = await req.json();
@@ -12,6 +12,6 @@ export const POST = withAuth(async (req, auth, { params }) => {
     return NextResponse.json({ error: "envVarId is required" }, { status: 400 });
   }
 
-  linkEnvVarToJob(id, body.envVarId);
+  await linkEnvVarToJobAsync(id, body.envVarId);
   return NextResponse.json({ ok: true });
 });

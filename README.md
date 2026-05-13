@@ -30,16 +30,15 @@ Workflow-only jobs that have no agent are discovered through `GET /api/workflows
 
 ## Designing Your Agent Team
 
-Agents process runs one at a time. While an agent is working on a run, its other jobs wait their turn. This is deliberate — each run gets the full agent, with no risk of two CLI processes colliding on the same working directory, session state, or API budget.
+By default each agent processes one run at a time. This is the safe default — coding agents writing to a shared workspace can collide if you let two runs touch the same files at once. There are three knobs for going beyond that:
 
-This shapes how you scale across multiple projects:
-
-- **Small install / one project.** One agent per role (e.g. a single `Developer`) works well. Jobs queue behind each other, which is usually fine for daily or hourly cadence.
-- **Multiple projects.** Create per-project agents — `ProjectA Developer`, `ProjectB Developer`, etc. — so work on different projects can run truly in parallel. Each one gets its own prompt, model, thinking level, and repo context. Use the **Projects** feature to filter the sidebar down to the agents and jobs for whatever you're focused on, so nine agents feels like three.
+- **Per-project agents.** Create `ProjectA Developer`, `ProjectB Developer`, etc., so work on different projects runs in parallel. Each has its own prompt, model, thinking level, and repo context. Use the **Projects** feature to filter the sidebar down to whatever you're focused on.
+- **Per-agent concurrency (optional).** Each agent has a `max_concurrent_runs` setting (default 1, capped at 10). Raise it and the runner will spawn up to N runs in parallel. When concurrency > 1, each run gets its own working directory at `~/.harbour/workspaces/<agent>/runs/<runId>/` and its own session file — siblings cannot stomp on each other. Recommended setting: **1 for repo-modifying coding agents**; higher for stateless text-only agents (summarizers, classifiers, draft writers).
+- **Teams (optional).** Group multiple agents under a Team. Jobs can be assigned to a team rather than a single agent; whichever team member has capacity claims it. Each team membership carries a **role** (`Researcher`, `Builder`, `Reviewer`, `Debugger`, or a custom label). A team job can request a `preferred_role` plus a `role_fallback` of `any` (let non-matching members claim once specialists are saturated) or `wait` (queue until a matching role frees up). See [docs/concepts/teams.md](docs/concepts/teams.md) for the full model.
 
 Docs, env vars, and databases are top-level and can be linked to any number of jobs across agents, so duplicating agents per project mostly means duplicating prompt/model config — not your shared knowledge base.
 
-If you ever want a single agent running multiple jobs concurrently, that's a deliberate config surface we haven't added. The current design has been enough so far; the per-project pattern above is the intended answer.
+> **Risks of high concurrency.** Each concurrent run is an independent LLM session — costs scale linearly. Coding agents sharing a repo or shell environment can corrupt each other's work even with per-run cwds (think: shared git index, package managers, ports). Keep coding-agent concurrency at 1 unless you've explicitly isolated each run's environment.
 
 ## Getting Started
 
@@ -98,7 +97,7 @@ The script stops `com.harbour.server`, rebuilds, starts it back up, and then res
 
 ### Harbour Agents
 
-Built-in support for running agents via [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), or [Gemini CLI](https://github.com/google-gemini/gemini-cli). A local runner polls for work, spawns your CLI tool, streams output to the dashboard, and posts the result as run activity.
+Built-in support for running agents via [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or a **Custom Shell Agent** (any command you write — see below). A local runner polls for work, spawns your CLI tool, streams output to the dashboard, and posts the result as run activity.
 
 1. Dashboard → **New Agent** → select **Harbour Agent** and pick your CLI tool
 2. Name it, pick a model and thinking/effort level, create a job with a schedule and instructions
@@ -108,11 +107,18 @@ Built-in support for running agents via [Claude Code](https://claude.ai/claude-c
 npm run harbour -- agent install
 ```
 
-The runner polls every 60 seconds. All configured agents and agentless workflow jobs run concurrently. Logs go to `~/.harbour/runner.log`.
+The install command auto-detects your OS:
+
+- **macOS** — writes a launchd plist to `~/Library/LaunchAgents/com.harbour.agent-runner.plist` and `launchctl load`s it. Logs at `~/.harbour/runner.log` / `runner.err.log`. Tail with `tail -f ~/.harbour/runner.log`.
+- **Linux** — writes a user-level systemd service + timer to `~/.config/systemd/user/harbour-agent-runner.{service,timer}` and `systemctl --user enable --now`s the timer. View logs with `journalctl --user -u harbour-agent-runner.service -f`. On a headless server, enable lingering so user services keep running after logout: `loginctl enable-linger $USER`.
+- **Other platforms** — the install command refuses with a clear error. Run the loop manually with `npm run harbour -- agent run` from cron or your supervisor of choice.
+
+Either way the runner polls every 60 seconds. All configured agents and agentless workflow jobs run concurrently.
 
 ```bash
 npm run harbour -- agent list        # show configured agents
 npm run harbour -- agent run         # manual poll (useful for testing)
+npm run harbour -- agent status      # is the runner installed + active?
 npm run harbour -- agent uninstall   # stop the runner
 ```
 
@@ -120,39 +126,118 @@ The runner injects the Harbour API credentials and endpoints into each prompt, s
 
 Model and thinking/effort levels can be set per agent (default) and overridden per job — letting you use a lighter model for routine tasks and a heavier one for complex work.
 
+#### Polling interval
+
+The runner polls every **60 seconds** by default. Configure with the CLI or the dashboard:
+
+```bash
+npm run harbour -- agent interval        # show current
+npm run harbour -- agent interval 15     # set to 15s
+```
+
+Or open **Settings → Runner polling interval** in the dashboard. Range: 5–3600 seconds. Below 15s, both surfaces print a warning — every poll spawns the runner and may invoke the LLM, so cost scales linearly with frequency.
+
+The interval governs cold polls only. **Eager polling** (per-agent toggle, see below) still kicks in immediately after a clean run completes, so a fast cadence + eager mode drains backlogs the fastest.
+
+Changes apply on the next `agent install`. The interval is stored at `~/.harbour/runner-config.json` per machine — when you operate a runner on a different host, set the interval there with the CLI.
+
 #### Eager polling
 
 By default the runner pauses 60 seconds between runs, even when there's a backlog of pending work. Toggle **Eager polling** on a harbour agent to drain the queue without that pause: when a run finishes cleanly (`done`, `waiting`, or `skipped`), the runner immediately polls for another run instead of waiting for the next launchd tick. As soon as the queue empties, the agent falls back to the normal 60s cadence.
 
 A failed or killed run breaks the eager loop — failures are most often transient (network, rate limits, timeouts), so the 60s gap acts as a free backoff. Eager mode trades latency for cost: stacking many LLM-driven runs back-to-back burns budget faster than the natural pacing. Off by default; enable per-agent in the agent's settings.
 
-#### Per-agent permissions (Claude Code)
+#### Custom Shell Agent
 
-By default Harbour invokes Claude Code with `--dangerously-skip-permissions`, which bypasses the permission system entirely — necessary for non-interactive runs in the general case (no UI to handle approval prompts), but it also means a compromised agent (e.g. one fooled by prompt injection via untrusted user input) has the full surface of the host machine.
+Any CLI tool, local LLM, or orchestration script can become a Harbour agent. Pick **Custom Shell** when creating a new harbour agent and supply:
 
-Drop a `.claude/settings.json` into a Claude-Code agent's workspace and Harbour switches that agent over to the permission system. Other agents are unaffected. With per-agent constraint you can:
+- **Shell command** — runs under `sh -c '…'`. Required.
+- **Working directory** — optional; defaults to the agent's workspace dir.
+- **Display label** — optional cosmetic name shown in the dashboard where models normally appear.
 
-- Deny dangerous binaries (`sqlite3`, `rm`, `ssh`, `scp`, `chmod`, `sudo`, …)
-- Deny reads of secret files (encryption keys, `.env*`, `~/.ssh/`, …)
-- Restrict `WebFetch` to allow-listed domains
-- Add `PreToolUse` hooks for argument-level checks the static patterns can't express (e.g. URL allow-listing for `curl` when `-H "Authorization: ..."` precedes the URL)
+How it works:
 
-Recommended layout:
+- Harbour pipes the run's full prompt (instructions + docs + db rows + extra context) to your command's **stdin**. Read it with `cat`, `read`, or whatever your runtime exposes.
+- Your stdout and stderr stream back to Harbour as run output — visible live on the run detail page.
+- If your command exits non-zero, Harbour marks the run `failed` automatically.
+- If you don't set a final status before exit, Harbour's failsafe also marks the run `failed`. To finish cleanly, call the Harbour API yourself.
 
+Four env vars are injected so your script can talk back to Harbour without extra wiring:
+
+| Variable | Value |
+|---|---|
+| `HARBOUR_URL` | base URL, e.g. `http://localhost:3000` |
+| `HARBOUR_API_KEY` | the agent's API key (the same one external agents use) |
+| `HARBOUR_AGENT_ID` | the polling agent's id |
+| `HARBOUR_RUN_ID` | the current run's id |
+| `HARBOUR_JOB_ID` | the current job's id |
+
+Minimal working script:
+
+```sh
+#!/usr/bin/env bash
+set -euo pipefail
+prompt="$(cat)"
+reply="$(curl -s https://my-llm.example/chat -d "$prompt")"
+echo "$reply"
+# Post the result as activity and mark the run done
+curl -s -X POST -H "Authorization: Bearer $HARBOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  "$HARBOUR_URL/api/runs/$HARBOUR_RUN_ID/activity" \
+  -d "$(jq -nc --arg c "$reply" '{content: $c}')"
+curl -s -X PUT -H "Authorization: Bearer $HARBOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  "$HARBOUR_URL/api/runs/$HARBOUR_RUN_ID/status" \
+  -d '{"status":"done"}'
 ```
-~/.harbour/workspaces/<agent>/.claude/settings.json
-~/.harbour/workspaces/<agent>/.claude/hooks/<hook>.sh
-~/.harbour/workspaces/<agent>/bin/<wrapper>          # optional
-```
 
-A few things worth knowing:
+⚠ **Security:** the command runs with the runner's full privileges. Anyone who can edit the agent in the dashboard can run anything on the host. Only configure Custom Shell agents with commands you fully trust.
 
-- Set `permissions.defaultMode` to `"dontAsk"` so unrecognized tool calls are auto-denied. The default `"default"` mode would block waiting for an interactive prompt that has no UI under `-p`.
-- Deny rules win over allow rules — make deny-list mistakes safe.
-- `Bash(...)` patterns match the literal command string, so URL filtering inside `curl` is fragile; do that in a hook instead.
-- Job-linked env vars are now layered onto the agent's shell environment, so prompts can use `$VAR` directly without leaking the secret as text in the LLM-emitted Bash command. The workspace's `bin/` directory (if present) is prepended to PATH so per-agent wrapper scripts resolve as bare command names.
+#### Permission modes
 
-Detection is conservative: a regular `settings.json` with a parseable `permissions` object is required. Symlinks to `/dev/null`, zero-byte files, and corrupt JSON all fall back to the legacy `--dangerously-skip-permissions` mode rather than silently switching to a half-configured permission system.
+Every harbour agent runs in one of three permission modes: `safe`, `custom`, `unrestricted`. What each mode actually enforces depends on the provider, because the providers have very different safety stories.
+
+| Provider | Native permissions | Harbour safe mode |
+|---|---|---|
+| **Claude Code** | Yes — `.claude/settings.json` allow/deny rules + hooks | Harbour materializes a deny-list `settings.json` in the workspace and Claude enforces it |
+| **Codex / Gemini / Custom Shell** | None | Harbour-level **soft sandbox**: shim PATH wrappers block `rm`, `sudo`, `chmod`, `chown`, `ssh`, `scp`, and `curl` with `Authorization` headers. Not a true sandbox — see caveats below |
+| **API agent** (DeepSeek / Kimi / OpenAI-compatible) | No shell at all | The model can only call Harbour HTTP tools you've enabled in tool permissions |
+
+New Claude and API agents default to `safe`. Codex, Gemini, and Custom Shell default to `unrestricted` — you have to opt them into the soft sandbox explicitly because that protection is best-effort. Existing agents migrated from before this feature stay on `unrestricted` so nothing breaks.
+
+##### Safe mode by provider
+
+**Claude Code.** Harbour writes `~/.harbour/workspaces/<agent>/.claude/settings.json` with a default deny-list (`rm -rf`, `sudo`, `chmod`, `chown`, `ssh`, `scp`, `curl` with auth headers, and reads of `.env*`, `~/.ssh/`, `~/.harbour/encryption.key`/`runners.json`/`harbour.db`). `permissions.defaultMode` is `"dontAsk"` so anything outside the allow-list is auto-denied — required for non-interactive `-p` runs. The file is materialized once and never overwritten, so your edits stick.
+
+**Codex, Gemini, Custom Shell.** These CLIs don't have a permission system Harbour can plug into. Safe mode here means:
+- Harbour installs shim scripts at `~/.harbour/safe-shims/` for `rm`, `sudo`, `chmod`, `chown`, `ssh`, `scp`, and `curl`. Each shim exits non-zero with a `harbour-safe-mode: <cmd> is denied — switch to unrestricted mode if you need this` message.
+- The runner prepends `<workspace>/bin/:~/.harbour/safe-shims/:` to PATH so when the CLI tries to spawn `rm`, the shim runs and the action fails visibly.
+- **This is a soft sandbox.** An LLM that calls `/bin/rm` by absolute path, shells through `python -c`, or sets PATH itself can still escape. We catch the common case of Codex/Gemini emitting raw bash commands; we don't pretend to do more. If you need real isolation, run the runner inside Docker, `sandbox-exec`, or `firejail`.
+
+**API agents.** No shell exists. The runner connects to your OpenAI-compatible endpoint (DeepSeek, Kimi, OpenAI, anything that speaks `chat/completions`) and gives the model a function-calling spec built from the agent's tool permissions. The model can post activity, read/write docs, read/write databases, read job env vars, set status, and hand off — and nothing else. Safe mode pre-selects a minimal tool set; you can toggle individual tools in the agent's settings.
+
+**Custom mode** keeps the same mechanism as Safe but defaults tool permissions to all-on for the explicit "I'm doing something specific, tune the knobs yourself" case. **Unrestricted** runs with no shims and (for Claude) `--dangerously-skip-permissions`. The agent detail page shows a "Switch to Safe" callout on unrestricted Claude agents so flipping back is one click.
+
+##### Tool permissions
+
+Every agent has ten per-endpoint permission flags, enforced **server-side** with a 403 response when a denied call comes in:
+
+| Tool | Endpoint gated |
+|---|---|
+| `read_docs` | `GET /api/docs`, `GET /api/docs/:id` |
+| `write_docs` | `POST/PUT/DELETE /api/docs[/:id]` |
+| `read_databases` | `GET /api/databases`, `GET /api/databases/:id/rows` |
+| `write_databases` | `POST /api/databases`, `POST /api/databases/:id/rows` |
+| `read_env_vars` | API-agent only; reads job-linked env vars from within the agent process |
+| `create_runs` | `POST /api/runs` |
+| `create_handoffs` | `POST /api/runs/:id/handoff` |
+| `post_activity` | `POST /api/runs/:id/activity` |
+| `update_status` | `PUT /api/runs/:id/status` |
+| `use_shell` | Informational — whether the agent's CLI is expected to spawn shell subprocesses |
+
+The `api` block in `/api/agents/:id/next` lists only the endpoints the agent may use, so an external agent reading the payload sees an honest contract. Existing agents migrate with every permission **on** (backwards compat); new agents pick defaults from their mode.
+
+**Settings → Security** surfaces the four risks Harbour can detect: agents in unrestricted mode, safe/custom Claude agents with a broken `settings.json`, name-slug workspace collisions, and safe-mode agents that nonetheless have `can_use_shell` or `can_read_env_vars` flipped on.
 
 #### Running the runner on a different machine
 
@@ -170,7 +255,7 @@ Sometimes a job needs to run on a specific machine — iOS/Xcode builds on a Mac
    npm run harbour -- agent connect <blob>
    ```
    The CLI decodes the blob, verifies it can reach harbour with the API key, and writes an entry to `~/.harbour/runners.json`.
-4. Schedule polling the same way as local agents: `npm run harbour -- agent install` (macOS / launchd).
+4. Schedule polling the same way as local agents: `npm run harbour -- agent install`. The install command auto-detects the host OS — macOS uses launchd, Linux uses a user-level systemd timer (and `loginctl enable-linger $USER` on headless servers).
 
 The blob contains the agent's API key — treat it like a password. If it's ever lost or leaked, open the agent detail page, click the **Connect Remote Runner** button, and generate a new command (rotates the key).
 
@@ -201,6 +286,26 @@ Admin API keys give external agents full management access to Harbour — creati
 The invite tells the agent to fetch `GET /api/admin-guide` with its key, which returns the full admin API reference. Admin keys resolve to the creating user's identity for audit trails.
 
 Admin API documentation is served at `/api/admin-guide` and maintained in [ADMIN_GUIDE.md](ADMIN_GUIDE.md).
+
+## User roles
+
+Every Harbour user has one of three roles. Existing users become **admin** on migration so nobody is locked out.
+
+- **admin** — full access. Manages users, admin API keys, global settings, env-var plaintexts. Can do anything operators and viewers can do.
+- **operator** — runs the day-to-day work. Create / edit / delete agents, jobs, docs, databases, projects, teams; trigger / retry / kill runs; comment on runs. Cannot manage users, admin keys, global settings, or reveal env-var plaintexts.
+- **viewer** — read-only. Sees the same dashboard pages as everyone else but every create / edit / delete button is hidden. Cannot reveal env-var plaintexts, trigger runs, comment, or change settings.
+
+Admins change a user's role from **Users** in the dashboard, or via:
+
+```
+PUT /api/users/<id>
+Authorization: Bearer <admin-api-key>
+Content-Type: application/json
+
+{"role": "operator"}
+```
+
+Harbour blocks demoting (or deleting) the **last admin** and blocks self-delete. **Agent** callers and **admin API key** callers bypass the role checks: agents are scoped per-resource by API key, and admin keys carry their creator's role.
 
 ## Agent API
 
@@ -238,11 +343,39 @@ scheduled → running → done
 
 Failed, skipped, and killed runs can be retried from the dashboard — the run goes back to `pending` and the agent picks it up on next poll. Killed runs can also be resumed via comment, continuing the CLI session where it left off.
 
-## Workflows
+## Workflows (Company OS)
 
-Workflows bring deterministic, shell-based execution to Harbour jobs. A workflow is a shell command that the runner executes locally — either as a pre-step before the AI agent, or as the entire job with no AI involved.
+Workflows turn Harbour from "one agent does one job on a schedule" into a place where you can model **repeatable business processes**: lead intake → research → draft outreach → human review → send. Each workflow is an ordered list of steps; each step routes to an agent or team and can pause for human approval before or after running.
 
-**Three execution modes:**
+**Building blocks:**
+
+- **Workflow** — top-level definition (name, department, status, autonomy level).
+- **Steps** — ordered. Each step has instructions, an assignment (single agent OR team + preferred role), and approval settings.
+- **Autonomy level** (per workflow):
+  - `manual` — human approves every step.
+  - `supervised` (default) — human approves risky steps and steps explicitly marked `requires_human_approval`.
+  - `autonomous` — only steps explicitly requiring approval pause; everything else runs.
+- **Risky** — a per-step flag. Auto-checked when the instructions contain keywords like `send email`, `deploy`, `delete`, `production`, `pay`, `refund`. Drives the supervised-mode gating decision. The user can always toggle it.
+
+**Lifecycle:**
+
+1. User clicks **Start** (optionally passing a JSON input). Harbour creates a `workflow_run` row and the first `workflow_step_run`.
+2. Each step that's ready spawns a one-off job + run using the existing agent/team routing. The runner picks it up identically to any other run — nothing changes about how agents execute work.
+3. When the run reaches `done`, Harbour's `updateRunStatus` hook advances the workflow: either start the next step, or pause for after-step approval.
+4. A human reviewer sees the waiting workflow run in **Workflows → (run)**, with **Approve**, **Reject**, **Request Changes** buttons. Request-changes appends reviewer feedback to the step's instructions and re-runs it.
+5. Reject terminates the workflow run. Done after the last step completes.
+
+**Examples** (replicate as workflows in your install — no template registry, just blank workflows you fill in):
+- Sales lead pipeline: research lead → draft outreach (after-step approval) → send email (before-step approval).
+- Support triage: classify ticket → search KB → propose response (after-step approval) → reply.
+- Bug fix pipeline: research the report → propose a fix (after-step approval) → write the patch → run tests.
+- Content production: outline → draft (after-step approval) → publish (before-step approval).
+
+Workflows live at `/workflows`. Workflow run progress views live at `/workflow-runs/<id>` and link to the underlying `/runs/<id>` pages for live agent logs. The full execution model + risky-keyword list are in [`docs/concepts/workflows.md`](docs/concepts/workflows.md).
+
+## Shell workflow jobs
+
+Independent of the workflow feature above, Harbour jobs can also have a **deterministic shell pre-step** (or be entirely shell-only, with no LLM at all). A shell-workflow job runs a command via `~/.harbour/workflows/`:
 
 | Mode | Config | What happens |
 |------|--------|-------------|
@@ -250,12 +383,11 @@ Workflows bring deterministic, shell-based execution to Harbour jobs. A workflow
 | Workflow + Agent | Workflow command, workflow_only off | Workflow runs first as a gate. Exit 0 = agent runs with stdout as context. Exit 77 = skip. Other = fail. |
 | Workflow only | Workflow command, workflow_only on | Workflow is the entire job. No agent, no LLM. Exit 0 = done. Exit 77 = skip. Other = fail. |
 
-Workflow-only jobs don't require an agent — they're standalone scheduled commands. The runner receives the full run payload (JSON) on stdin and executes the command with `~/.harbour/workflows/` as the working directory.
+Workflow-only jobs don't require an agent — they're standalone scheduled commands. The runner receives the full run payload (JSON) on stdin.
 
 ```bash
 # Example: workflow-only job that checks an API
 # workflow_command: python3 check_health.py
-# Receives run payload on stdin, prints result to stdout
 ```
 
 ## Projects
@@ -316,9 +448,26 @@ All Harbour state lives under `~/.harbour` by default — DB, uploads, encryptio
 |----------|-------------|---------|
 | `HARBOUR_HOME` | Root directory for all Harbour state | `~/.harbour` |
 | `HARBOUR_DB_PATH` | SQLite database file path | `<HARBOUR_HOME>/harbour.db` |
+| `DATABASE_URL` | Optional Postgres connection string (e.g. `postgres://user:pass@host:5432/harbour`). When set, Harbour uses Postgres instead of SQLite. Leave unset for the default SQLite experience. | _(unset — uses SQLite)_ |
 | `HARBOUR_UPLOADS_DIR` | Run attachments directory | `<HARBOUR_HOME>/uploads` |
 | `HARBOUR_ENCRYPTION_KEY` | 64-char hex key for env var encryption | Auto-generated at `<HARBOUR_HOME>/encryption.key` |
 | `HARBOUR_MAX_UPLOAD_MB` | Per-file upload cap in MB | `500` |
+
+### Postgres support (optional)
+
+Harbour ships with a Postgres adapter for team and managed-DB deployments. SQLite remains the default and recommended choice for solo installs — single-file backups, zero-ops, the simplest possible deploy. Postgres is worth considering once you have multiple harbour processes hitting one database, a managed-DB compliance requirement, or a database large enough that the SQLite file is awkward to back up.
+
+To run with Postgres locally via Docker Compose:
+
+```bash
+docker compose --profile postgres up -d postgres
+export DATABASE_URL=postgres://harbour:harbour@localhost:5432/harbour
+docker compose up -d harbour
+```
+
+`DATABASE_URL` must begin with `postgres://` or `postgresql://`. Any other prefix (or an unset value) keeps Harbour on SQLite — there is no automatic migration in either direction. To switch an existing SQLite install to Postgres, treat it as a fresh setup: start the PG instance, point `DATABASE_URL` at it, and recreate your agents/jobs/docs from scratch.
+
+> **Note:** Every API route now uses the async DB adapter, so Postgres is a fully-supported backend for fresh installs. The migration covered all 60+ route handlers under `src/app/api/` (auth, agents, jobs, runs, docs, databases, env-vars, projects, teams, captain, users, admin-api-keys, system, usage). SQLite remains the default; setting `DATABASE_URL=postgres://...` switches to the Postgres adapter at boot. There is **no automatic schema migration between backends** — switching an existing SQLite install to Postgres means starting with a fresh DB. Known caveats are around test tooling (pg-mem can't model `FOR UPDATE SKIP LOCKED` or some COUNT-subquery patterns; the polling and list queries work on real Postgres). Track progress in [docs/reference/architecture.md](docs/reference/architecture.md).
 
 ## License
 

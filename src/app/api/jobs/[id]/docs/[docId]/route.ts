@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
-import { unlinkDocFromJob } from "@/lib/db/queries";
+import { withAuth, withOperator } from "@/lib/auth";
+import { unlinkDocFromJobAsync } from "@/lib/db/queries";
 
-export const DELETE = withAuth(async (req, auth, { params }) => {
+export const DELETE = withOperator(async (req, auth, { params }) => {
   const { id, docId } = await params;
-  unlinkDocFromJob(id, docId);
+  await unlinkDocFromJobAsync(id, docId);
   return NextResponse.json({ ok: true });
 });

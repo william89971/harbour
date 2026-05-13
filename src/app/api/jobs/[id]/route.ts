@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
-import { getJobById, updateJob, deleteJob } from "@/lib/db/queries";
+import { withAuth, withOperator } from "@/lib/auth";
+import { getJobByIdAsync, updateJobAsync, deleteJobAsync } from "@/lib/db/queries";
 import { normalizeSchedule } from "@/lib/schedule";
 
 export const GET = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
-  const job = getJobById(id);
+  const job = await getJobByIdAsync(id);
   if (!job) return NextResponse.json({ error: "Job not found" }, { status: 404 });
   return NextResponse.json(job);
 });
 
-export const PUT = withAuth(async (req, auth, { params }) => {
+export const PUT = withOperator(async (req, auth, { params }) => {
   const { id } = await params;
-  const existing = getJobById(id);
+  const existing = await getJobByIdAsync(id);
   if (!existing) return NextResponse.json({ error: "Job not found" }, { status: 404 });
 
   const body = await req.json();
@@ -29,12 +29,16 @@ export const PUT = withAuth(async (req, auth, { params }) => {
   if (body.envVarIds !== undefined && !Array.isArray(body.envVarIds)) {
     return NextResponse.json({ error: "envVarIds must be an array of strings" }, { status: 400 });
   }
-  const updated = updateJob(id, body);
-  return NextResponse.json(updated);
+  try {
+    const updated = await updateJobAsync(id, body);
+    return NextResponse.json(updated);
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 400 });
+  }
 });
 
-export const DELETE = withAuth(async (req, auth, { params }) => {
+export const DELETE = withOperator(async (req, auth, { params }) => {
   const { id } = await params;
-  deleteJob(id);
+  await deleteJobAsync(id);
   return NextResponse.json({ ok: true });
 });

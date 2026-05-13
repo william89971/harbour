@@ -58,3 +58,45 @@ export function ensureDir(dir: string): void {
     fs.mkdirSync(dir, { recursive: true });
   }
 }
+
+/** Slugify an agent name to a workspace directory segment. Must match
+ *  bin/lib/providers.mjs::ensureWorkingDir so the server-side security
+ *  panel and the runner agree on which directory belongs to which agent. */
+export function agentWorkspaceSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+}
+
+export function agentWorkspaceDir(name: string): string {
+  return path.join(harbourHome(), "workspaces", agentWorkspaceSlug(name));
+}
+
+export function agentSettingsJsonPath(name: string): string {
+  return path.join(agentWorkspaceDir(name), ".claude", "settings.json");
+}
+
+/**
+ * Resolve a DB-stored attachment path against the uploads root and refuse to
+ * escape it. Defense-in-depth: storage_path is set during upload via a
+ * sanitized basename + UUID prefix, so escape is not possible from the happy
+ * path — but a corrupted DB column, a restore from a different backup, or a
+ * future writer bug should not become a wide-open file-read vulnerability.
+ * Returns the resolved absolute path on success, throws on traversal.
+ */
+export function safeUploadJoin(storagePath: string): string {
+  if (typeof storagePath !== "string" || !storagePath) {
+    throw new Error("invalid storage path");
+  }
+  // Absolute paths are always a sign of corruption — uploads are stored as
+  // relative paths like "runs/<id>/<uuid>__filename". Reject upfront so an
+  // absolute /etc/passwd cannot smuggle past path.join (which would happily
+  // produce <uploads>/etc/passwd — still under root but clearly wrong).
+  if (path.isAbsolute(storagePath)) {
+    throw new Error("path traversal blocked");
+  }
+  const root = path.resolve(uploadsDir());
+  const resolved = path.resolve(path.join(root, storagePath));
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new Error("path traversal blocked");
+  }
+  return resolved;
+}

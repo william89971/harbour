@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { v4 as uuid } from "uuid";
-import { getDb } from "./schema";
+import { getDb, getDbAsync } from "./schema";
 import { uploadsDir, runUploadsDir } from "../paths";
 
 export type AttachmentKind = "file" | "embed";
@@ -154,4 +154,85 @@ export function deleteAttachment(id: string): boolean {
 export function deleteRunAttachmentsDir(runId: string): void {
   const dir = runUploadsDir(runId);
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+}
+
+// ---------------------------------------------------------------------------
+// Async variants — cross-backend (SQLite + Postgres) via the adapter layer.
+// ---------------------------------------------------------------------------
+
+export async function createFileAttachmentAsync(params: {
+  runId: string;
+  filename: string;
+  storagePath: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploader: Uploader;
+  title?: string | null;
+}): Promise<RunAttachment> {
+  const db = await getDbAsync();
+  const id = uuid();
+  await db.run(
+    `INSERT INTO run_attachments
+       (id, run_id, kind, filename, storage_path, mime_type, size_bytes, title,
+        uploaded_by_type, uploaded_by_id, uploaded_by_name)
+     VALUES (?, ?, 'file', ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, params.runId, params.filename, params.storagePath, params.mimeType, params.sizeBytes,
+      params.title ?? null, params.uploader.type, params.uploader.id, params.uploader.name],
+  );
+  const row = await getAttachmentByIdAsync(id);
+  return row!;
+}
+
+export async function createEmbedAttachmentAsync(params: {
+  runId: string;
+  url: string;
+  uploader: Uploader;
+  title?: string | null;
+}): Promise<RunAttachment> {
+  const db = await getDbAsync();
+  const provider = detectEmbedProvider(params.url);
+  if (!provider) throw new Error("Invalid embed URL");
+  const id = uuid();
+  await db.run(
+    `INSERT INTO run_attachments
+       (id, run_id, kind, url, embed_provider, title,
+        uploaded_by_type, uploaded_by_id, uploaded_by_name)
+     VALUES (?, ?, 'embed', ?, ?, ?, ?, ?, ?)`,
+    [id, params.runId, params.url, provider, params.title ?? null,
+      params.uploader.type, params.uploader.id, params.uploader.name],
+  );
+  const row = await getAttachmentByIdAsync(id);
+  return row!;
+}
+
+export async function getAttachmentByIdAsync(id: string): Promise<RunAttachment | null> {
+  const db = await getDbAsync();
+  return db.get<RunAttachment>(`SELECT * FROM run_attachments WHERE id = ?`, [id]);
+}
+
+export async function listAttachmentsByRunAsync(runId: string): Promise<RunAttachment[]> {
+  const db = await getDbAsync();
+  return db.all<RunAttachment>(`SELECT * FROM run_attachments WHERE run_id = ? ORDER BY created_at ASC`, [runId]);
+}
+
+export async function linkAttachmentsToActivityAsync(attachmentIds: string[], activityId: string, runId: string): Promise<void> {
+  if (!attachmentIds.length) return;
+  const db = await getDbAsync();
+  const placeholders = attachmentIds.map(() => "?").join(",");
+  await db.run(
+    `UPDATE run_attachments SET activity_id = ? WHERE run_id = ? AND id IN (${placeholders}) AND activity_id IS NULL`,
+    [activityId, runId, ...attachmentIds],
+  );
+}
+
+export async function deleteAttachmentAsync(id: string): Promise<boolean> {
+  const db = await getDbAsync();
+  const att = await getAttachmentByIdAsync(id);
+  if (!att) return false;
+  if (att.kind === "file" && att.storage_path) {
+    const abs = path.join(uploadsDir(), att.storage_path);
+    try { fs.unlinkSync(abs); } catch { /* already gone */ }
+  }
+  await db.run(`DELETE FROM run_attachments WHERE id = ?`, [id]);
+  return true;
 }

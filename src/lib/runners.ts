@@ -9,6 +9,20 @@ export type RunnerConfig = {
   model: string | null;
   thinking: string | null;
   eager?: boolean;
+  maxConcurrentRuns?: number;
+  /** Custom Shell provider: the user-supplied command and optional cwd. */
+  shellCommand?: string | null;
+  shellCwd?: string | null;
+  /** Persisted fallback so the runner can pick a permission mode for older
+   *  payloads that don't include the field. Live value still comes from
+   *  /api/agents/:id/next so dashboard changes take effect immediately. */
+  permissionMode?: "safe" | "custom" | "unrestricted";
+  /** API-agent fields. apiBaseUrl is the OpenAI-compatible chat endpoint
+   *  base URL (e.g. https://api.deepseek.com/v1). apiKeyEnv is the env-var
+   *  name the runner reads to authenticate to that endpoint — the key is
+   *  NEVER stored in runners.json. */
+  apiBaseUrl?: string | null;
+  apiKeyEnv?: string | null;
   url: string;
 };
 

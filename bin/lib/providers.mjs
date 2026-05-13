@@ -3,6 +3,7 @@ import path from "path";
 import os from "os";
 import fs from "fs";
 import crypto from "crypto";
+import { validateClaudeSettings } from "./safe-settings.mjs";
 
 // Cache resolved binary paths
 const binaryPathCache = {};
@@ -25,6 +26,22 @@ function resolveBinary(name) {
 //   info         — system info (init, model, etc.)
 //   error        — error message
 //   result       — final summary
+//
+// Provider contract — every entry in PROVIDERS exports:
+//   id              string                            — stable key (matches agents.cli)
+//   displayName     string                            — UI-facing label
+//   supportedModels string[]                          — model choices the UI offers
+//   supportedThinking { label, options }              — parity with CLI_CONFIG.ts
+//   checkAvailable  () => boolean                     — sync probe; default returns true
+//   buildCommand    (opts) => { binary, args, cwd,    — options object:
+//                              stdinPayload? }            { prompt, model, workingDir,
+//                                                          sessionId, isNewSession,
+//                                                          thinking, runner }
+//   parseLine?      (line) => { events, sessionId? }  — stateless line parser
+//   createParser?   () => { parseLine }               — stateful alternative
+//   parseResult     (stdout, sessionId?) =>           — final summary extraction
+//                   { content, sessionId, usage? }
+//   generateSessionId? () => string                   — providers that resume by id
 
 // Extract a concise display string from a tool's input JSON.
 function formatToolInput(toolName, inputJson) {
@@ -51,43 +68,51 @@ function formatToolInput(toolName, inputJson) {
   }
 }
 
-// Provider: how to invoke each CLI tool in batch mode, with streaming support
+// Provider: how to invoke each CLI tool in batch mode, with streaming support.
+//
+// Each provider object additionally carries `capabilities` mirroring
+// src/lib/cli-config.ts::ProviderCapabilities, so the runner and tooling
+// scripts can introspect provider behavior without importing the server bundle.
 
 const PROVIDERS = {
   claude: {
+    id: "claude",
+    displayName: "Claude Code",
+    supportedModels: ["sonnet", "opus", "haiku"],
+    supportedThinking: { label: "Effort", options: ["low", "medium", "high", "max"] },
+    capabilities: {
+      supportsNativePermissions: true,
+      supportsHarbourSafeMode: true,
+      requiresBypassForNonInteractive: true,
+      hasShellAccess: true,
+      safetyNotes: "Safe mode uses Claude's own .claude/settings.json permission system.",
+    },
+    checkAvailable: () => { try { execSync("which claude", { stdio: "ignore" }); return true; } catch { return false; } },
     generateSessionId() {
       return crypto.randomUUID();
     },
-    buildCommand(prompt, model, workingDir, sessionId, isNewSession, thinking) {
+    buildCommand(opts) {
+      const { prompt, model, workingDir, sessionId, isNewSession, thinking, permissionMode = "unrestricted" } = opts;
       const args = [
         "-p",
         "--output-format", "stream-json",
         "--verbose",
         "--include-partial-messages",
       ];
-      // If the workspace has a valid .claude/settings.json with a permissions
-      // object, opt into the permission system. Otherwise, fall back to the
-      // legacy unrestricted mode so existing agents keep working without
-      // per-agent config.
-      //
-      // Validate by stat (regular file, not a symlink to /dev/null) and JSON
-      // parse with a permissions object — a corrupt or empty settings file
-      // shouldn't silently switch the agent into a less-protected mode.
-      let hasSettings = false;
-      try {
-        const settingsPath = path.join(workingDir, ".claude", "settings.json");
-        const st = fs.statSync(settingsPath);
-        if (st.isFile() && st.size > 0) {
-          const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-          if (parsed && typeof parsed.permissions === "object") {
-            hasSettings = true;
-          }
-        }
-      } catch {
-        // Missing file, parse error, etc. — fall through to legacy mode.
-      }
-      if (!hasSettings) {
+      // permission_mode comes from the agent record (see runner.mjs). No more
+      // silent fallback: if the user picked safe or custom, we honor it or
+      // refuse to launch — we don't quietly drop into --dangerously-skip-
+      // permissions when settings.json is missing.
+      if (permissionMode === "unrestricted") {
         args.push("--dangerously-skip-permissions");
+      } else if (permissionMode === "safe" || permissionMode === "custom") {
+        const v = validateClaudeSettings(workingDir);
+        if (!v.ok) {
+          throw new Error(`permission_mode=${permissionMode} but ${v.error} at ${path.join(workingDir, ".claude", "settings.json")}`);
+        }
+        // No skip flag — Claude reads the workspace settings.json itself.
+      } else {
+        throw new Error(`unknown permission_mode: ${permissionMode}`);
       }
       if (model) args.push("--model", model);
       if (thinking) args.push("--effort", thinking);
@@ -201,36 +226,72 @@ const PROVIDERS = {
       const lines = stdout.trim().split("\n");
       let content = "";
       let sessionId = presetSessionId;
+      let model = null;
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let sawUsage = false;
       for (const line of lines) {
         try {
           const obj = JSON.parse(line);
-          if (obj.type === "result" && obj.result) {
-            content = obj.result;
+          if (obj.type === "system" && obj.subtype === "init" && obj.model) {
+            model = obj.model;
+          }
+          if (obj.type === "result") {
+            if (obj.result) content = obj.result;
+            // Claude Code's final result event carries cumulative usage
+            if (obj.usage) {
+              inputTokens = Number(obj.usage.input_tokens || obj.usage.cache_read_input_tokens || 0) +
+                Number(obj.usage.cache_creation_input_tokens || 0);
+              outputTokens = Number(obj.usage.output_tokens || 0);
+              sawUsage = true;
+            }
           }
           if (obj.session_id) sessionId = obj.session_id;
         } catch { /* skip */ }
       }
       if (!content) content = stdout;
-      return { content: content.trim(), sessionId };
+      const usage = sawUsage && (inputTokens > 0 || outputTokens > 0)
+        ? { provider: "claude", model, input_tokens: inputTokens, output_tokens: outputTokens }
+        : null;
+      return { content: content.trim(), sessionId, usage };
     },
   },
 
   codex: {
-    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, thinking) {
-      // Codex 0.128+ removed the top-level --reasoning-effort flag. Use the
-      // generic config override instead: -c model_reasoning_effort=<level>.
+    id: "codex",
+    displayName: "Codex",
+    supportedModels: ["gpt-5.5", "gpt-5.4"],
+    supportedThinking: { label: "Reasoning", options: ["low", "medium", "high", "xhigh"] },
+    capabilities: {
+      supportsNativePermissions: false,
+      supportsHarbourSafeMode: true,
+      requiresBypassForNonInteractive: true,
+      hasShellAccess: true,
+      safetyNotes: "Codex has no native permission system. Safe mode is a Harbour-level soft sandbox: PATH-shim wrappers block common dangerous commands.",
+    },
+    checkAvailable: () => { try { execSync("which codex", { stdio: "ignore" }); return true; } catch { return false; } },
+    buildCommand(opts) {
+      const { prompt, model, workingDir, sessionId, thinking, permissionMode = "unrestricted" } = opts;
+      // Codex has no native permission system. Safe/custom mode still
+      // launches Codex with its bypass flag — otherwise the CLI hangs
+      // waiting for an interactive approval. Harbour-level safety comes
+      // from the shim PATH wrappers configured by the runner; see
+      // bin/lib/safe-shims.mjs.
+      const bypass = "--dangerously-bypass-approvals-and-sandbox";
+      // Codex 0.128+ removed the top-level --reasoning-effort flag. Use
+      // the generic config override instead: -c model_reasoning_effort=...
       if (sessionId) {
-        const args = ["exec", "resume", "--dangerously-bypass-approvals-and-sandbox", "--json"];
+        const args = ["exec", "resume", bypass, "--json"];
         if (model) args.push("-m", model);
         if (thinking) args.push("-c", `model_reasoning_effort=${thinking}`);
         args.push(sessionId, prompt);
-        return { binary: resolveBinary("codex"), args, cwd: workingDir };
+        return { binary: resolveBinary("codex"), args, cwd: workingDir, harbourSafeMode: permissionMode !== "unrestricted" };
       }
-      const args = ["exec", "--dangerously-bypass-approvals-and-sandbox", "--json"];
+      const args = ["exec", bypass, "--json"];
       if (model) args.push("-m", model);
       if (thinking) args.push("-c", `model_reasoning_effort=${thinking}`);
       args.push(prompt);
-      return { binary: resolveBinary("codex"), args, cwd: workingDir };
+      return { binary: resolveBinary("codex"), args, cwd: workingDir, harbourSafeMode: permissionMode !== "unrestricted" };
     },
     parseLine(line) {
       try {
@@ -287,12 +348,23 @@ const PROVIDERS = {
       const lines = stdout.trim().split("\n");
       let sessionId = null;
       let lastMessage = "";
+      let model = null;
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let sawUsage = false;
 
       for (const line of lines) {
         try {
           const obj = JSON.parse(line);
           if (obj.type === "thread.started" && obj.thread_id) {
             sessionId = obj.thread_id;
+          }
+          if (obj.model && !model) model = obj.model;
+          if (obj.type === "turn.completed" && obj.usage) {
+            // Codex sums usage per turn; aggregate across turns.
+            inputTokens += Number(obj.usage.input_tokens || 0);
+            outputTokens += Number(obj.usage.output_tokens || 0);
+            sawUsage = true;
           }
           if (obj.type === "item.completed" && obj.item) {
             if (obj.item.text) {
@@ -324,21 +396,38 @@ const PROVIDERS = {
       }
 
       if (!lastMessage.trim()) lastMessage = stdout;
-      return { content: lastMessage.trim(), sessionId };
+      const usage = sawUsage && (inputTokens > 0 || outputTokens > 0)
+        ? { provider: "codex", model, input_tokens: inputTokens, output_tokens: outputTokens }
+        : null;
+      return { content: lastMessage.trim(), sessionId, usage };
     },
   },
 
   gemini: {
-    buildCommand(prompt, model, workingDir, sessionId, _isNewSession, _thinking) {
-      // Gemini 0.40+ removed --thinking (reasoning depth is now controlled
-      // by model selection) and requires --skip-trust for headless mode in
-      // non-trusted workspace dirs (otherwise exits code 55).
+    id: "gemini",
+    displayName: "Gemini CLI",
+    supportedModels: ["gemini-2.5-pro", "gemini-2.5-flash"],
+    supportedThinking: { label: "Thinking", options: [] },
+    capabilities: {
+      supportsNativePermissions: false,
+      supportsHarbourSafeMode: true,
+      requiresBypassForNonInteractive: true,
+      hasShellAccess: true,
+      safetyNotes: "Gemini has no native permission system. Safe mode is a Harbour-level soft sandbox: PATH-shim wrappers block common dangerous commands.",
+    },
+    checkAvailable: () => { try { execSync("which gemini", { stdio: "ignore" }); return true; } catch { return false; } },
+    buildCommand(opts) {
+      const { prompt, model, workingDir, sessionId, permissionMode = "unrestricted" } = opts;
+      // Gemini has no native permission system either. Same story as
+      // Codex: --yolo is required for headless mode regardless of
+      // Harbour's permission tier; Harbour-level safety comes from the
+      // shim PATH wrappers, not from refusing to set --yolo.
       const args = ["--prompt", prompt, "--yolo", "--skip-trust", "-o", "stream-json"];
       if (model) args.push("-m", model);
       if (sessionId) {
         args.push("--resume", sessionId);
       }
-      return { binary: resolveBinary("gemini"), args, cwd: workingDir };
+      return { binary: resolveBinary("gemini"), args, cwd: workingDir, harbourSafeMode: permissionMode !== "unrestricted" };
     },
     parseLine(line) {
       try {
@@ -391,12 +480,17 @@ const PROVIDERS = {
       const lines = stdout.trim().split("\n");
       let sessionId = null;
       let content = "";
+      let model = null;
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let sawUsage = false;
 
       for (const line of lines) {
         try {
           const obj = JSON.parse(line);
-          if (obj.type === "init" && obj.session_id) {
-            sessionId = obj.session_id;
+          if (obj.type === "init") {
+            if (obj.session_id) sessionId = obj.session_id;
+            if (obj.model) model = obj.model;
           }
           if (obj.type === "tool_result") {
             content = ""; // reset — next assistant messages are the final turn
@@ -404,11 +498,96 @@ const PROVIDERS = {
           if (obj.type === "message" && obj.role === "assistant" && obj.content) {
             content += obj.content;
           }
+          if (obj.type === "result" && obj.stats) {
+            inputTokens = Number(obj.stats.input_tokens || 0);
+            outputTokens = Number(obj.stats.output_tokens || 0);
+            sawUsage = true;
+          }
         } catch { /* Not JSON — skip stderr noise */ }
       }
 
       if (!content.trim()) content = stdout;
-      return { content: content.trim(), sessionId };
+      const usage = sawUsage && (inputTokens > 0 || outputTokens > 0)
+        ? { provider: "gemini", model, input_tokens: inputTokens, output_tokens: outputTokens }
+        : null;
+      return { content: content.trim(), sessionId, usage };
+    },
+  },
+
+  api: {
+    id: "api",
+    displayName: "API Agent",
+    supportedModels: ["deepseek-chat", "deepseek-reasoner", "moonshot-v1-32k", "moonshot-v1-128k", "gpt-4o-mini", "gpt-4o"],
+    supportedThinking: { label: "", options: [] },
+    capabilities: {
+      supportsNativePermissions: false,
+      supportsHarbourSafeMode: true,
+      requiresBypassForNonInteractive: false,
+      hasShellAccess: false,
+      safetyNotes: "API agents have no shell access. The model can only invoke Harbour HTTP tools you've enabled in tool permissions.",
+    },
+    // API agents don't shell out. The runner detects useApiAgent: true and
+    // calls into bin/lib/api-agent.mjs::runApiAgent instead of spawning a
+    // subprocess. buildCommand returns the sentinel + everything the
+    // runner needs to drive that loop.
+    buildCommand(opts) {
+      const { prompt, model, runner, permissionMode = "unrestricted" } = opts;
+      return {
+        useApiAgent: true,
+        prompt,
+        model,
+        apiBaseUrl: runner?.apiBaseUrl,
+        apiKeyEnv: runner?.apiKeyEnv,
+        permissionMode,
+        // The harbour-side metadata + tool permissions are added by the
+        // runner from the /next payload before invoking runApiAgent.
+      };
+    },
+    // The runner branches before parseLine is called for api agents — these
+    // exist only to satisfy the provider contract.
+    parseLine() { return { events: [] }; },
+    parseResult(_stdout, _sessionId) {
+      return { content: "", sessionId: null, usage: null };
+    },
+  },
+
+  shell: {
+    id: "shell",
+    displayName: "Custom Shell Agent",
+    supportedModels: [],
+    supportedThinking: { label: "", options: [] },
+    capabilities: {
+      supportsNativePermissions: false,
+      supportsHarbourSafeMode: true,
+      requiresBypassForNonInteractive: false,
+      hasShellAccess: true,
+      safetyNotes: "The command runs with the runner's full privileges. Safe mode prepends shim wrappers to PATH but cannot stop a command that calls /bin/rm by absolute path.",
+    },
+    checkAvailable: () => true, // /bin/sh is universal on macOS + Linux
+    // The shell provider runs an arbitrary user-supplied command. The prompt is
+    // piped to the command's stdin (so scripts can `cat` it) and stdout/stderr
+    // stream back as plain-text events. The script can post status updates to
+    // Harbour via the HARBOUR_API_KEY + HARBOUR_URL + HARBOUR_RUN_ID env vars
+    // the runner injects into every CLI subprocess.
+    buildCommand(opts) {
+      const { prompt, runner, workingDir } = opts;
+      const cmd = runner?.shellCommand;
+      if (!cmd || !String(cmd).trim()) {
+        throw new Error("Custom Shell agent has no shellCommand configured");
+      }
+      return {
+        binary: "sh",
+        args: ["-c", cmd],
+        cwd: runner?.shellCwd || workingDir,
+        stdinPayload: prompt,
+      };
+    },
+    // No structured stream — every stdout line becomes a text_delta event.
+    parseLine(line) {
+      return { events: [{ event_type: "text_delta", content: line + "\n" }] };
+    },
+    parseResult(stdout) {
+      return { content: (stdout || "").trim(), sessionId: null, usage: null };
     },
   },
 };
@@ -429,6 +608,20 @@ export function ensureWorkingDir(agentName) {
 }
 
 /**
+ * Per-run working directory under the agent workspace. Used when an agent is
+ * configured with max_concurrent_runs > 1 so concurrent runs don't clobber
+ * each other's files or session state.
+ */
+export function ensureRunWorkingDir(agentName, runId) {
+  const base = ensureWorkingDir(agentName);
+  const dir = path.join(base, "runs", runId);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+/**
  * Run a CLI tool, streaming JSONL output line-by-line to onLine callback.
  * Returns { code, stdout, stderr, aborted } when the process exits.
  *
@@ -436,7 +629,13 @@ export function ensureWorkingDir(agentName) {
  * immediately, followed by SIGKILL after `killGraceMs` (default 3s) if the
  * process hasn't exited.
  */
-export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, killGraceMs = 3000, onLine, signal, extraEnv } = {}) {
+/**
+ * @param {string} binary
+ * @param {string[]} args
+ * @param {string} cwd
+ * @param {{ timeoutMs?: number, startupTimeoutMs?: number, killGraceMs?: number, onLine?: (line: string) => void, signal?: AbortSignal, extraEnv?: Record<string, string>, stdinPayload?: string }} [opts]
+ */
+export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, startupTimeoutMs = 30_000, killGraceMs = 3000, onLine, signal, extraEnv, stdinPayload } = {}) {
   return new Promise((resolve, reject) => {
     // Build clean environment: strip Claude Code nesting guards, then layer
     // run-scoped env vars (decrypted Harbour env vars for this job) on top.
@@ -464,7 +663,12 @@ export function runCliTool(binary, args, cwd, { timeoutMs = 10 * 60 * 1000, star
       timeout: timeoutMs,
     });
 
-    // Close stdin immediately — CLI tools should not wait for interactive input
+    // If the caller supplied a stdin payload (Custom Shell provider pipes the
+    // prompt this way), write it before closing. Otherwise close immediately —
+    // most CLI tools should not wait for interactive input.
+    if (stdinPayload != null) {
+      try { child.stdin.write(String(stdinPayload)); } catch { /* child may have already exited */ }
+    }
     child.stdin.end();
 
     let stdout = "";

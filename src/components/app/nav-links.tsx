@@ -11,8 +11,12 @@ import {
   Database,
   KeyRound,
   Users,
+  Users2,
   Settings,
   MessageSquare,
+  DollarSign,
+  Workflow,
+  LayoutDashboard,
 } from "lucide-react";
 
 export function NavLinks({ onClick }: { onClick?: () => void }) {
@@ -20,14 +24,18 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
   const { waitingCount } = useApp();
 
   const links = [
+    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { href: "/captain", label: "Captain", icon: MessageSquare },
     { href: "/", label: "Runs", icon: Activity, badge: waitingCount },
+    { href: "/workflows", label: "Workflows", icon: Workflow },
     { href: "/jobs", label: "Jobs", icon: Briefcase },
     { href: "/agents", label: "Agents", icon: Bot },
+    { href: "/teams", label: "Teams", icon: Users2 },
     { href: "/docs", label: "Docs", icon: FileText },
     { href: "/databases", label: "Databases", icon: Database },
     { href: "/env-vars", label: "Env Vars", icon: KeyRound },
     { href: "/users", label: "Users", icon: Users },
+    { href: "/usage", label: "Usage", icon: DollarSign },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 

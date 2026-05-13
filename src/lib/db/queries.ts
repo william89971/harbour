@@ -11,3 +11,7 @@ export * from "./admin-api-keys";
 export * from "./attachments";
 export * from "./video-processing";
 export * from "./captain";
+export * from "./teams";
+export * from "./handoffs";
+export * from "./workflows";
+export * from "./autonomy";

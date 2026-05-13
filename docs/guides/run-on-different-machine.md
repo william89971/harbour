@@ -104,9 +104,22 @@ You should see something like `[<agent-name>] Polling...` followed by `[<agent-n
 npm run harbour -- agent install
 ```
 
-This writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60`. launchd reruns `harbour agent run` every 60 seconds. Logs go to `~/.harbour/runner.log` and `~/.harbour/runner.err.log`.
+[`bin/lib/install.mjs`](../../bin/lib/install.mjs) detects the host OS:
 
-> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it'll silently put a file in the wrong place and the `launchctl load` will fail. There is no built-in Linux/systemd path in `bin/` today. On Linux, write your own systemd unit (see the [DigitalOcean cloud-init template](../../terraform/cloud-init.yml.tftpl) — it's the model: a `bash -c 'while true; do node bin/harbour.mjs agent run || true; sleep 60; done'` service unit), or use cron. The harbour server's [DigitalOcean deploy](deploy-to-production.md#path-b-digitalocean-droplet-via-terraform) does this for the server-side runner.
+- **macOS:** launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60`. Logs at `~/.harbour/runner.log` / `runner.err.log`.
+- **Linux:** user-level systemd `.service` + `.timer` at `~/.config/systemd/user/`. Logs via `journalctl --user -u harbour-agent-runner.service -f`. On a headless server, run `loginctl enable-linger $USER` so user units survive logout.
+- **Other:** the install command exits with an error. Run `npm run harbour -- agent run` from cron or your preferred supervisor.
+
+Use `npm run harbour -- agent status` to see install state, timer activity, and the right log command for your platform.
+
+**Polling cadence on the remote.** The interval is per-host. The dashboard's Settings page only writes to the *server's* `~/.harbour/runner-config.json` — it can't reach the remote machine's filesystem. To change cadence on a remote runner, run the CLI on that remote box:
+
+```bash
+npm run harbour -- agent interval 15
+npm run harbour -- agent uninstall && npm run harbour -- agent install
+```
+
+Range 5..3600 seconds; default 60. See [README → Polling interval](../../README.md#polling-interval) for tradeoffs.
 
 ## What runs on the remote, what runs on harbour
 

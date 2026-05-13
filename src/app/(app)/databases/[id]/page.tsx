@@ -11,7 +11,7 @@ import { Briefcase, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 
-type ColumnInfo = { cid: number; name: string; type: string; notnull: number; dflt_value: any; pk: number };
+type ColumnInfo = { cid: number; name: string; type: string; notnull: number; dflt_value: string | number | null; pk: number };
 type JobRef = { id: string; name: string };
 
 type DatabaseDetail = {
@@ -25,13 +25,13 @@ type DatabaseDetail = {
 };
 
 type RowsResponse = {
-  rows: Record<string, any>[];
+  rows: Record<string, unknown>[];
   total: number;
   limit: number;
   offset: number;
 };
 
-function formatCell(value: any): string {
+function formatCell(value: unknown): string {
   if (value === null || value === undefined) return "\u2014";
   if (typeof value === "boolean") return value ? "true" : "false";
   return String(value);
@@ -135,16 +135,19 @@ export default function DatabaseDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map(row => (
-                <tr key={row._id} className="border-b last:border-0 hover:bg-accent/30 transition-colors">
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{row._id}</td>
-                  {columns.map(col => (
-                    <td key={col.name} className="px-3 py-2 text-sm whitespace-nowrap">
-                      {formatCell(row[col.name])}
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {rows.map(row => {
+                const rowId = String(row._id ?? "");
+                return (
+                  <tr key={rowId} className="border-b last:border-0 hover:bg-accent/30 transition-colors">
+                    <td className="px-3 py-2 text-xs text-muted-foreground">{rowId}</td>
+                    {columns.map(col => (
+                      <td key={col.name} className="px-3 py-2 text-sm whitespace-nowrap">
+                        {formatCell(row[col.name])}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -217,11 +217,22 @@ Researcher     claude   opus     —          http://localhost:3000
 npm run harbour -- agent install
 ```
 
-This writes a launchd plist at `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60` so launchd reruns `harbour agent run` every 60 seconds. Logs go to `~/.harbour/runner.log`.
+`installRunner()` in [`bin/lib/install.mjs`](../../bin/lib/install.mjs) detects the host OS and picks the right backend:
 
-> **macOS only.** [`bin/lib/install.mjs`](../../bin/lib/install.mjs) writes a launchd plist with no platform check — on Linux it puts the file in the wrong place and `launchctl load` fails. There's no built-in Linux/systemd path in `bin/` today; on Linux, write your own systemd unit or schedule `npm run harbour -- agent run` from cron.
+- **macOS:** writes `~/Library/LaunchAgents/com.harbour.agent-runner.plist` with `StartInterval=60` and `launchctl load`s it. Logs at `~/.harbour/runner.log` and `~/.harbour/runner.err.log`. Tail with `tail -f ~/.harbour/runner.log`.
+- **Linux:** writes a user-level systemd `.service` + `.timer` to `~/.config/systemd/user/` and enables the timer (60-second `OnUnitActiveSec`, 10-second `OnBootSec`, `Persistent=true` for missed runs). View logs with `journalctl --user -u harbour-agent-runner.service -f`. On a headless server, run `loginctl enable-linger $USER` so user services persist across logouts.
+- **Other platforms** (Windows, BSD): the install command exits with a clear error. Run `npm run harbour -- agent run` from cron / a supervisor / whatever you've got.
 
-To stop polling: `npm run harbour -- agent uninstall` (removes the plist and unloads it).
+To check the install state: `npm run harbour -- agent status`. To stop polling: `npm run harbour -- agent uninstall` (removes the units and disables them; macOS removes the plist).
+
+To poll faster than every 60 seconds, set the cadence **before installing**:
+
+```bash
+npm run harbour -- agent interval 15    # 5..3600 seconds
+npm run harbour -- agent install
+```
+
+Or change it in the dashboard at **Settings → Runner polling interval**. The value lives in `~/.harbour/runner-config.json` per host; changes take effect on the next `agent install`.
 
 ## Now what?
 

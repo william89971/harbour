@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteSession } from "@/lib/db/queries";
+import { deleteSessionAsync } from "@/lib/db/queries";
 
 export async function POST(req: NextRequest) {
   try {
     const sessionId = req.cookies.get("harbour_session")?.value;
     if (sessionId) {
-      deleteSession(sessionId);
+      await deleteSessionAsync(sessionId);
     }
 
     const response = NextResponse.json({ ok: true });

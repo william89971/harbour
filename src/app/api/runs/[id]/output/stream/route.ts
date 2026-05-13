@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
 import { withAuth } from "@/lib/auth";
-import { getRunById, listRunOutput } from "@/lib/db/queries";
+import { getRunByIdAsync, listRunOutputAsync } from "@/lib/db/queries";
 
 export const dynamic = "force-dynamic";
 
 export const GET = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
-  const run = getRunById(id);
+  const run = await getRunByIdAsync(id);
   if (!run) {
     return new Response("Run not found", { status: 404 });
   }
@@ -27,17 +27,17 @@ export const GET = withAuth(async (req, auth, { params }) => {
       };
 
       // Poll the DB for new output events
-      const poll = () => {
+      const poll = async () => {
         if (closed) return;
         try {
-          const events = listRunOutput(id, lastId);
+          const events = await listRunOutputAsync(id, lastId);
           for (const evt of events) {
             send("output", evt);
             if (evt.id && evt.id > lastId) lastId = evt.id;
           }
 
           // Check if run is finished
-          const currentRun = getRunById(id);
+          const currentRun = await getRunByIdAsync(id);
           if (currentRun && (currentRun.status === "done" || currentRun.status === "failed" || currentRun.status === "skipped" || currentRun.status === "killed")) {
             // Send any final events, then close
             send("status", { status: currentRun.status });
@@ -52,7 +52,7 @@ export const GET = withAuth(async (req, auth, { params }) => {
           return;
         }
 
-        if (!closed) setTimeout(poll, 500);
+        if (!closed) setTimeout(() => { poll(); }, 500);
       };
 
       poll();

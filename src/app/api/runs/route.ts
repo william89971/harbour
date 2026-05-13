@@ -1,35 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
-import { listRunningRuns, listWaitingRuns, listRecentRuns, listScheduledRuns, createOneOffRun } from "@/lib/db/queries";
-import { getRecentRunsLimit } from "@/lib/db/settings";
+import { withAuth, withOperator } from "@/lib/auth";
+import { requireTool } from "@/lib/tool-permissions";
+import { listRunningRunsAsync, listWaitingRunsAsync, listRecentRunsAsync, listScheduledRunsAsync, createOneOffRunAsync } from "@/lib/db/queries";
+import { getRecentRunsLimitAsync } from "@/lib/db/settings";
 
 export const GET = withAuth(async (req) => {
   const filter = req.nextUrl.searchParams.get("filter");
   const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
   if (filter === "waiting") {
-    return NextResponse.json(listWaitingRuns(projectId));
+    return NextResponse.json(await listWaitingRunsAsync(projectId));
   }
-  const limit = getRecentRunsLimit();
+  const limit = await getRecentRunsLimitAsync();
   if (filter === "recent") {
-    return NextResponse.json(listRecentRuns(limit, projectId));
+    return NextResponse.json(await listRecentRunsAsync(limit, projectId));
   }
 
   // Default: return all sections
-  return NextResponse.json({
-    scheduled: listScheduledRuns(projectId),
-    running: listRunningRuns(projectId),
-    waiting: listWaitingRuns(projectId),
-    recent: listRecentRuns(limit, projectId),
-  });
+  const [scheduled, running, waiting, recent] = await Promise.all([
+    listScheduledRunsAsync(projectId),
+    listRunningRunsAsync(projectId),
+    listWaitingRunsAsync(projectId),
+    listRecentRunsAsync(limit, projectId),
+  ]);
+  return NextResponse.json({ scheduled, running, waiting, recent });
 });
 
-export const POST = withAuth(async (req) => {
+export const POST = withOperator(async (req, auth) => {
+  const toolErr = requireTool(auth, "create_runs");
+  if (toolErr) return toolErr;
   const body = await req.json();
   if (!body.agentId || !body.name) {
     return NextResponse.json({ error: "agentId and name are required" }, { status: 400 });
   }
 
-  const result = createOneOffRun(body.agentId, {
+  const result = await createOneOffRunAsync(body.agentId, {
     name: body.name,
     instructions: body.instructions,
     docIds: body.docIds,

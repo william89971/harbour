@@ -11,6 +11,9 @@ import { useApp } from "@/components/app/app-context";
 import { useRouter } from "next/navigation";
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
+import { AutonomyApprovalsPanel } from "@/components/app/autonomy-approvals-panel";
+import { AutonomyPoliciesPanel } from "@/components/app/autonomy-policies-panel";
+import { RoleGate } from "@/components/app/role-gate";
 
 type Settings = Record<string, string>;
 
@@ -219,6 +222,29 @@ export default function SettingsPage() {
     },
   });
 
+  const { data: runnerInterval } = useQuery<{ pollIntervalSeconds: number; min: number; max: number; default: number }>({
+    queryKey: ["runner-interval"],
+    queryFn: async () => {
+      const res = await fetch("/api/system/runner-interval");
+      if (!res.ok) return { pollIntervalSeconds: 60, min: 5, max: 3600, default: 60 };
+      return res.json();
+    },
+  });
+
+  async function saveRunnerInterval(n: number) {
+    const res = await fetch("/api/system/runner-interval", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pollIntervalSeconds: n }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Failed to update polling interval" }));
+      alert(err.error);
+      return;
+    }
+    queryClient.invalidateQueries({ queryKey: ["runner-interval"] });
+  }
+
   const { data: adminKeys = [] } = useQuery<any[]>({
     queryKey: ["admin-api-keys"],
     queryFn: async () => {
@@ -363,6 +389,35 @@ export default function SettingsPage() {
           />
         </div>
 
+        {/* Runner Polling Interval */}
+        <div className="space-y-2">
+          <Label>Runner polling interval</Label>
+          <p className="text-xs text-muted-foreground">
+            How often the local runner polls for new work. Lower intervals reduce delay but can increase server/API usage. Range 5–3600 seconds; default 60. Changes take effect on the next <code>npm run harbour -- agent install</code>.
+          </p>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={runnerInterval?.min ?? 5}
+              max={runnerInterval?.max ?? 3600}
+              className="font-mono text-sm w-32"
+              value={runnerInterval?.pollIntervalSeconds ?? 60}
+              onChange={e => {
+                const v = parseInt(e.target.value, 10);
+                const min = runnerInterval?.min ?? 5;
+                const max = runnerInterval?.max ?? 3600;
+                if (Number.isInteger(v) && v >= min && v <= max) saveRunnerInterval(v);
+              }}
+            />
+            <span className="text-sm text-muted-foreground">seconds</span>
+          </div>
+          {(runnerInterval?.pollIntervalSeconds ?? 60) < 15 && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              ⚠ Below 15 seconds — each poll spawns the runner and may invoke the LLM. Expect higher cost.
+            </p>
+          )}
+        </div>
+
         {/* Captain */}
         <div className="rounded-lg border p-4 space-y-4">
           <div>
@@ -463,6 +518,35 @@ export default function SettingsPage() {
             <Plus className="h-4 w-4 mr-1.5" /> New Key
           </Button>
         </div>
+
+        <SecurityStatusSection />
+
+        <div className="rounded-lg border p-4 space-y-4">
+          <div>
+            <Label className="text-base font-medium">Autonomy & Approvals</Label>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Declarative policies decide when an agent action needs human approval. The default
+              global policy gates high-risk actions (send_email, deploy_code, …) and caps medium
+              spend at $10. Scope-specific policies (agent / team / workflow / department) override
+              the global default in that order.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-wider text-muted-foreground">Pending approvals</p>
+            <AutonomyApprovalsPanel filter={{ status: "pending", limit: 50 }} emptyHint="No pending approvals." />
+          </div>
+
+          <RoleGate
+            action="manageAutonomyPolicies"
+            fallback={<p className="text-xs text-muted-foreground">Only admins can edit policies.</p>}
+          >
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-wider text-muted-foreground">Policies</p>
+              <AutonomyPoliciesPanel />
+            </div>
+          </RoleGate>
+        </div>
       </div>
 
       {/* Create admin key dialog */}
@@ -534,6 +618,164 @@ export default function SettingsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+type SecurityStatus = {
+  unrestrictedAgents: { id: string; name: string; cli: string | null; mode: string }[];
+  customModeIssues: { id: string; name: string; mode: string; settingsJsonPath: string; error: string }[];
+  workspaceCollisions: { slug: string; agents: { id: string; name: string }[] }[];
+  excessivePermissions: { id: string; name: string; mode: string; flags: string[] }[];
+  apiAgentsWithoutStatus: { id: string; name: string }[];
+  jobEnvVars: { count: number };
+};
+
+function SecurityStatusSection() {
+  const { data, isLoading } = useQuery<SecurityStatus | null>({
+    queryKey: ["security-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/system/security-status");
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 30_000,
+  });
+
+  if (isLoading || !data) return null;
+
+  const allClear =
+    data.unrestrictedAgents.length === 0 &&
+    data.customModeIssues.length === 0 &&
+    data.workspaceCollisions.length === 0 &&
+    (data.excessivePermissions?.length ?? 0) === 0 &&
+    (data.apiAgentsWithoutStatus?.length ?? 0) === 0;
+
+  return (
+    <div className="rounded-lg border p-4 space-y-4">
+      <div>
+        <Label className="text-base font-medium">Security</Label>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Risks Harbour can detect from the current configuration. Permission modes are configured per agent.
+        </p>
+      </div>
+
+      <div className="space-y-3 text-sm">
+        <div>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Unrestricted agents</p>
+          {data.unrestrictedAgents.length === 0 ? (
+            <p className="text-xs text-muted-foreground mt-1">All Claude agents are using safe or custom mode.</p>
+          ) : (
+            <ul className="mt-1 space-y-1">
+              {data.unrestrictedAgents.map(a => (
+                <li key={a.id} className="flex items-center justify-between rounded-md border px-3 py-2">
+                  <div className="min-w-0">
+                    <a href={`/agents/${a.id}`} className="text-sm font-medium hover:underline">{a.name}</a>
+                    <p className="text-xs text-muted-foreground">{a.cli ?? "—"} · runs without sandbox</p>
+                  </div>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-700 dark:text-rose-400">unrestricted</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Missing or invalid settings.json</p>
+          {data.customModeIssues.length === 0 ? (
+            <p className="text-xs text-muted-foreground mt-1">No issues.</p>
+          ) : (
+            <ul className="mt-1 space-y-1">
+              {data.customModeIssues.map(a => (
+                <li key={a.id} className="rounded-md border px-3 py-2">
+                  <div className="flex items-center justify-between">
+                    <a href={`/agents/${a.id}`} className="text-sm font-medium hover:underline">{a.name}</a>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400">{a.mode}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">{a.error}</p>
+                  <p className="text-[10px] text-muted-foreground font-mono mt-0.5 break-all">{a.settingsJsonPath}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Workspace collisions</p>
+          {data.workspaceCollisions.length === 0 ? (
+            <p className="text-xs text-muted-foreground mt-1">No two agents share a workspace directory.</p>
+          ) : (
+            <ul className="mt-1 space-y-1">
+              {data.workspaceCollisions.map(c => (
+                <li key={c.slug} className="rounded-md border px-3 py-2">
+                  <p className="text-xs font-mono text-muted-foreground">~/.harbour/workspaces/{c.slug}/</p>
+                  <p className="text-xs mt-0.5">
+                    Shared by {c.agents.map((a, i) => (
+                      <span key={a.id}>
+                        {i > 0 && ", "}
+                        <a href={`/agents/${a.id}`} className="font-medium hover:underline">{a.name}</a>
+                      </span>
+                    ))}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Rename one of these agents to give it its own working tree.</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Excessive permissions in safe mode</p>
+          {(data.excessivePermissions?.length ?? 0) === 0 ? (
+            <p className="text-xs text-muted-foreground mt-1">No safe-mode agents have shell or env-var access enabled.</p>
+          ) : (
+            <ul className="mt-1 space-y-1">
+              {data.excessivePermissions!.map(a => (
+                <li key={a.id} className="rounded-md border px-3 py-2">
+                  <div className="flex items-center justify-between">
+                    <a href={`/agents/${a.id}`} className="text-sm font-medium hover:underline">{a.name}</a>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400">{a.mode}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {a.mode} mode normally denies these, but the following are enabled: {a.flags.map(f => <code key={f} className="bg-muted px-1 rounded mr-1">{f}</code>)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">API agents missing update_status</p>
+          {(data.apiAgentsWithoutStatus?.length ?? 0) === 0 ? (
+            <p className="text-xs text-muted-foreground mt-1">No API agents are missing the update_status tool.</p>
+          ) : (
+            <ul className="mt-1 space-y-1">
+              {data.apiAgentsWithoutStatus!.map(a => (
+                <li key={a.id} className="rounded-md border px-3 py-2">
+                  <a href={`/agents/${a.id}`} className="text-sm font-medium hover:underline">{a.name}</a>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    This API agent cannot mark its own runs as done — runs will sit in &lsquo;running&rsquo; until the per-job timeout fires. Enable <code className="bg-muted px-1 rounded">update_status</code> in tool permissions to fix.
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Env vars attached to jobs</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {data.jobEnvVars.count === 0
+              ? "No env vars currently attached to any job."
+              : `${data.jobEnvVars.count} job–env-var attachment${data.jobEnvVars.count === 1 ? "" : "s"}. Decrypted values are injected into runs at execution time.`}
+          </p>
+        </div>
+
+        {allClear && data.jobEnvVars.count === 0 && (
+          <p className="text-xs text-emerald-700 dark:text-emerald-400">No security issues detected.</p>
+        )}
+      </div>
     </div>
   );
 }

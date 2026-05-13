@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withAuth, withUserAuth } from "@/lib/auth";
-import { listAllJobs, createJob } from "@/lib/db/queries";
+import { listAllJobsAsync, createJobAsync } from "@/lib/db/queries";
 import { normalizeSchedule } from "@/lib/schedule";
 
 export const GET = withAuth(async (req) => {
   const projectId = req.nextUrl.searchParams.get("projectId") || undefined;
-  return NextResponse.json(listAllJobs(projectId));
+  return NextResponse.json(await listAllJobsAsync(projectId));
 });
 
 // Create an agentless workflow-only job
@@ -19,7 +19,7 @@ export const POST = withUserAuth(async (req) => {
   if (!normalized) {
     return NextResponse.json({ error: "Invalid schedule format. Use {\"every\":N} for intervals or {\"days\":[0-6],\"time\":\"HH:MM\"} for weekly." }, { status: 400 });
   }
-  const job = createJob(null, {
+  const job = await createJobAsync(null, {
     name,
     description,
     schedule: normalized,

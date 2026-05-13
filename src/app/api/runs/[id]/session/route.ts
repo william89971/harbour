@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getRunById, updateRunSessionId } from "@/lib/db/queries";
+import { withAuth, withOperator, requireAgentOwnership } from "@/lib/auth";
+import { getRunByIdAsync, updateRunSessionIdAsync } from "@/lib/db/queries";
 
-export const PUT = withAuth(async (req, auth, { params }) => {
+export const PUT = withOperator(async (req, auth, { params }) => {
   const { id } = await params;
-  const run = getRunById(id);
+  const run = await getRunByIdAsync(id);
   if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
   const ownerError = requireAgentOwnership(auth, run.agent_id);
@@ -15,6 +15,6 @@ export const PUT = withAuth(async (req, auth, { params }) => {
     return NextResponse.json({ error: "session_id is required" }, { status: 400 });
   }
 
-  updateRunSessionId(id, body.session_id, body.cwd || undefined);
+  await updateRunSessionIdAsync(id, body.session_id, body.cwd || undefined);
   return NextResponse.json({ ok: true });
 });

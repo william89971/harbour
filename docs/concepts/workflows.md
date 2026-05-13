@@ -1,6 +1,106 @@
 # Workflows
 
-A workflow is a shell command stored on a job. The local runner executes it on the runner's host before (or instead of) handing off to a CLI agent. It's how Harbour does deterministic, code-defined work without involving an LLM.
+Harbour has two distinct features that both go by "workflow":
+
+1. **Business workflows** (also called pipelines) — ordered series of agent/team-routed steps with optional human approval gates. This is the Company-OS layer: model a department process, run it, gate humans at the right moments. The rest of this section covers them.
+2. **Shell workflows** — a deterministic shell command attached to a single job, either as a gate before the agent runs or as the entire job. Covered further down in [Shell workflows](#shell-workflows-job-level).
+
+The two are independent; a workflow step can include a job with a shell workflow command if you want both layers.
+
+## Business workflows (Company OS)
+
+A workflow has:
+
+- A **definition** (`workflows` table): name, description, department, status (`draft|active|paused|archived`), and an `autonomy_level` of `manual` / `supervised` / `autonomous`.
+- **Ordered steps** (`workflow_steps`): each step has instructions (which support `{{input.key}}` substitution), an assignment to a single agent or a team + preferred role, an `approval_type` of `none|before_step|after_step`, and `requires_human_approval` / `risky` flags.
+
+When a user clicks **Start** on a workflow, Harbour creates a `workflow_run` and the first `workflow_step_run`. If the first step doesn't need approval, Harbour spawns a one-off job + run using the existing agent/team routing. **The runner is unchanged.** When the run reaches `done`, the `updateRunStatusAsync` hook calls `advanceWorkflowAfterRunAsync(runId, status)`, which advances the workflow to the next step (or pauses for after-step approval) the same way handoff status propagation already works.
+
+### Autonomy + risky
+
+| Autonomy | Pre-step approval | Post-step approval |
+|---|---|---|
+| `manual` | Every step pauses before running. | If `approval_type='after_step'`. |
+| `supervised` (default) | If `risky` OR `requires_human_approval` OR `approval_type='before_step'`. | If `approval_type='after_step'` AND (risky OR requires). |
+| `autonomous` | Only if `approval_type='before_step'` AND `requires_human_approval`. | Only if `approval_type='after_step'` AND `requires_human_approval`. |
+
+The pure decision functions are in `src/lib/db/workflow-helpers.ts` (`requiresBeforeApproval`, `requiresAfterApproval`), unit-tested in `src/__tests__/workflows-approval.test.ts`.
+
+A step is auto-marked `risky=true` when its instructions match a keyword from `src/lib/workflow-risky.ts`: `send email`, `deploy`, `delete`, `production`, `pay`, `refund`, etc. The user can always toggle it.
+
+### Approval actions
+
+When `workflow_run.status = waiting_for_approval`, an operator on `/workflow-runs/<id>` can:
+
+- **Approve** — if the gate was `before_step`, the step's job + run spawns and the workflow returns to `running`. If `after_step`, the step is marked done and the next step starts (or the workflow finishes).
+- **Reject** — workflow_run goes to `rejected`, terminal. The current step_run gets `rejected`.
+- **Request Changes** — step_run goes to `needs_changes` with the reviewer's comment + optional extra instructions stored. The operator clicks **Resume** to re-run the step with feedback appended to the instructions.
+- **Comment** — append to the audit log without changing state.
+
+### Lifecycle diagram
+
+```
+workflow_run (running)
+  ↓
+step_run (pending) ─┬─ before-gate? → waiting_approval_before
+                    │     ├ approve   → running → spawns job + run
+                    │     ├ reject    → workflow rejected [terminal]
+                    │     └ req-chng  → needs_changes; resume → re-spawn
+                    │
+                    └─ no gate         → running → spawns job + run
+                                              ↓ run terminates
+                                          ├ done + after-gate? → waiting_approval_after
+                                          │     (approve/reject/req-changes same as above)
+                                          ├ done (no gate)    → next step
+                                          └ failed/killed     → workflow failed
+```
+
+### Schema
+
+Four tables, `CREATE TABLE IF NOT EXISTS` so existing installs auto-create on first boot. Plus `workflow_run_activity` for the append-only audit log. See `src/lib/db/schema.ts` for the canonical definitions and `docs/reference/database-schema.md` for the column-by-column listing.
+
+### API surface
+
+- `GET /api/workflows`, `POST /api/workflows`
+- `GET /api/workflows/:id` (includes steps + recent runs), `PUT`, `DELETE`
+- `POST /api/workflows/:id/steps`, `PUT /api/workflows/:id/steps/:stepId`, `DELETE`
+- `POST /api/workflows/:id/steps/reorder` with `{ stepIds: [...] }`
+- `POST /api/workflows/:id/start` with optional `{ input: {...} }`
+- `GET /api/workflow-runs`, `GET /api/workflow-runs/:id`
+- `POST /api/workflow-runs/:id/{approve,reject,request-changes,resume,comment}`
+
+All mutating routes are gated by `withOperator` (admins + operators can act, viewers can only read). The UI gates the same set behind `<RoleGate action="mutateWorkflow">`.
+
+### Examples
+
+Harbour doesn't ship template workflows — fill in your own. Common shapes:
+
+- **Sales lead pipeline** (Sales, supervised): research lead → draft outreach (after-step approval, risky) → send email (before-step approval, risky).
+- **Support triage** (Support, autonomous): classify ticket → pull KB → draft response (after-step approval) → reply (before-step approval).
+- **Bug-fix pipeline** (Engineering, supervised): reproduce → propose fix (after-step approval) → implement → run tests. Each step team-routed with role preferences.
+- **Content production** (Content, supervised): outline → draft (after-step approval) → publish (before-step approval).
+
+### Testing
+
+- `src/__tests__/workflow-risky.test.ts` — keyword detector.
+- `src/__tests__/workflows-approval.test.ts` — pure autonomy matrix.
+- `src/__tests__/workflows-core.test.ts` — CRUD + start + advance via in-memory SQLite.
+- `src/__tests__/workflows-routing.test.ts` — every autonomy mode + approval flow + team routing.
+- `src/__tests__/workflows-pg.test.ts` — schema + CRUD against pg-mem.
+
+### Out of scope (today)
+
+- Conditional branching (if/else, parallel forks). Steps are strictly linear.
+- Recurring workflows. User-triggered only.
+- Multi-approver flows. One approval per gate.
+- Workflow versioning. Editing a workflow doesn't retroactively change in-flight step_runs.
+- Template registry / marketplace.
+
+---
+
+## Shell workflows (job-level)
+
+A shell workflow is a shell command stored on a job. The local runner executes it on the runner's host before (or instead of) handing off to a CLI agent. It's how Harbour does deterministic, code-defined work without involving an LLM.
 
 The whole feature is two columns on `jobs`:
 

@@ -1,12 +1,12 @@
 import { withUserAuth } from "@/lib/auth";
-import { getConversation, listCaptainOutput } from "@/lib/db/captain";
+import { getConversationAsync, listCaptainOutputAsync } from "@/lib/db/captain";
 import { isRunning } from "@/lib/captain/process-manager";
 
 export const dynamic = "force-dynamic";
 
 export const GET = withUserAuth(async (req, auth, { params }) => {
   const { id } = await params;
-  const conversation = getConversation(id);
+  const conversation = await getConversationAsync(id);
   if (!conversation || conversation.user_id !== auth.userId) {
     return new Response("Not found", { status: 404 });
   }
@@ -29,10 +29,10 @@ export const GET = withUserAuth(async (req, auth, { params }) => {
         }
       };
 
-      const poll = () => {
+      const poll = async () => {
         if (closed) return;
         try {
-          const events = listCaptainOutput(id, lastId, messageId);
+          const events = await listCaptainOutputAsync(id, lastId, messageId);
           for (const evt of events) {
             send("output", evt);
             if (evt.id > lastId) lastId = evt.id;
@@ -41,7 +41,7 @@ export const GET = withUserAuth(async (req, auth, { params }) => {
           // If process is no longer running, flush and close
           if (!isRunning(id)) {
             // One final poll to catch any remaining events
-            const remaining = listCaptainOutput(id, lastId, messageId);
+            const remaining = await listCaptainOutputAsync(id, lastId, messageId);
             for (const evt of remaining) {
               send("output", evt);
             }
@@ -64,7 +64,7 @@ export const GET = withUserAuth(async (req, auth, { params }) => {
           return;
         }
 
-        if (!closed) setTimeout(poll, 300);
+        if (!closed) setTimeout(() => { poll(); }, 300);
       };
 
       poll();

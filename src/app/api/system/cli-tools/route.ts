@@ -41,5 +41,9 @@ function checkTool(tool: typeof CLI_TOOLS[number]) {
 
 export const GET = withAuth(async () => {
   const tools = CLI_TOOLS.map(checkTool);
+  // Custom Shell Agent is always available — it invokes /bin/sh, which exists
+  // on every supported host (macOS, Linux). It runs user-supplied commands;
+  // see the security warning in the agent create dialog.
+  tools.push({ id: "shell", name: "Custom Shell Agent", installed: true });
   return NextResponse.json(tools);
 });

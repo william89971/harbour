@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { withAuth } from "@/lib/auth";
-import { getDatabaseById, deleteDatabase, getDatabaseMigrations, getJobsForDatabase } from "@/lib/db/queries";
+import { withAuth, withOperator } from "@/lib/auth";
+import { getDatabaseByIdAsync, deleteDatabaseAsync, getDatabaseMigrationsAsync, getJobsForDatabaseAsync } from "@/lib/db/queries";
 
 export const GET = withAuth(async (req, auth, { params }) => {
   const { id } = await params;
-  const db = getDatabaseById(id);
+  const db = await getDatabaseByIdAsync(id);
   if (!db) return NextResponse.json({ error: "Database not found" }, { status: 404 });
 
-  const migrations = getDatabaseMigrations(id);
-  const jobs = getJobsForDatabase(id);
+  const migrations = await getDatabaseMigrationsAsync(id);
+  const jobs = await getJobsForDatabaseAsync(id);
   return NextResponse.json({ ...db, migrations, jobs });
 });
 
-export const DELETE = withAuth(async (req, auth, { params }) => {
+export const DELETE = withOperator(async (req, auth, { params }) => {
   const { id } = await params;
-  deleteDatabase(id);
+  await deleteDatabaseAsync(id);
   return NextResponse.json({ ok: true });
 });

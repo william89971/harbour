@@ -4,8 +4,18 @@ import path from "path";
 import { normalizeSchedule } from "../schedule";
 import { encrypt } from "../encryption";
 import { dbPath, harbourHome, ensureDir } from "../paths";
+import type { DbAdapter } from "./adapter";
+import { createSqliteAdapter, wrapSqliteDb, SqliteAdapter } from "./adapter-sqlite";
+import { createPostgresAdapter, PostgresAdapter } from "./adapter-postgres";
+import { initializePostgresSchema } from "./schema-postgres";
 
+// Legacy sync handle — every existing DB module still uses this. The async
+// adapter layer below is the future direction; both are kept side-by-side
+// during the Postgres migration so SQLite paths keep working unchanged while
+// new code can opt into the async adapter.
 let _db: Database.Database | null = null;
+let _adapter: DbAdapter | null = null;
+let _initPromise: Promise<DbAdapter> | null = null;
 
 /**
  * One-time migration: if a legacy ./harbour.db exists in the cwd and the
@@ -31,26 +41,83 @@ function migrateLegacyDbIfNeeded() {
   console.log(`[harbour] Migrated ${legacy} → ${target} (original preserved)`);
 }
 
+function isPostgresUrl(url: string | undefined): boolean {
+  return !!url && /^postgres(ql)?:\/\//i.test(url);
+}
+
+/** Legacy sync handle. Used by every existing DB module today. Continues to
+ *  open the same SQLite file with WAL + foreign_keys and run inline migrations.
+ *  Throws if DATABASE_URL is set to a Postgres URL — those callers must use
+ *  the new async getDbAsync()/getAdapter() API instead. */
 export function getDb(): Database.Database {
-  if (!_db) {
-    ensureDir(harbourHome());
-    migrateLegacyDbIfNeeded();
-    _db = new Database(dbPath());
-    _db.pragma("journal_mode = WAL");
-    _db.pragma("foreign_keys = ON");
-    initializeSchema(_db);
+  if (_db) return _db;
+  const url = process.env.DATABASE_URL;
+  if (isPostgresUrl(url)) {
+    throw new Error(
+      "Sync getDb() called while DATABASE_URL is set to Postgres. The caller " +
+      "needs to be migrated to use the async adapter (getDbAsync()). " +
+      "Postgres support is rolling out module-by-module.",
+    );
   }
+  ensureDir(harbourHome());
+  migrateLegacyDbIfNeeded();
+  _db = new Database(dbPath());
+  _db.pragma("journal_mode = WAL");
+  _db.pragma("foreign_keys = ON");
+  initializeSchema(_db);
   return _db;
 }
 
-export function setDb(db: Database.Database) {
-  _db = db;
+/** Async adapter handle. Returns a `DbAdapter` that abstracts over both
+ *  better-sqlite3 (when DATABASE_URL is unset) and node-postgres (when set).
+ *  New code should prefer this; legacy sync code keeps using `getDb()`. */
+export async function getDbAsync(): Promise<DbAdapter> {
+  if (_adapter) return _adapter;
+  if (_initPromise) return _initPromise;
+
+  _initPromise = (async () => {
+    const url = process.env.DATABASE_URL;
+    if (isPostgresUrl(url)) {
+      const adapter = createPostgresAdapter(url!);
+      await initializePostgresSchema(adapter);
+      _adapter = adapter;
+      return adapter;
+    }
+    // Reuse the sync SQLite handle so both APIs share one file/connection.
+    const raw = getDb();
+    _adapter = wrapSqliteDb(raw);
+    return _adapter;
+  })();
+
+  return _initPromise;
+}
+
+/** Test helper: swap in a raw better-sqlite3 Database (legacy path) or an
+ *  already-built DbAdapter (new path). Both handles are kept in sync. */
+export function setDb(adapterOrDb: DbAdapter | Database.Database) {
+  if ((adapterOrDb as DbAdapter).dialect) {
+    _adapter = adapterOrDb as DbAdapter;
+    // Best-effort: surface the underlying better-sqlite3 instance to the sync
+    // handle so legacy code paths still work in tests.
+    const inner = (adapterOrDb as SqliteAdapter).db;
+    if (inner) _db = inner;
+    _initPromise = Promise.resolve(_adapter);
+  } else {
+    _db = adapterOrDb as Database.Database;
+    _adapter = wrapSqliteDb(_db);
+    _initPromise = Promise.resolve(_adapter);
+  }
 }
 
 export function resetDb() {
   _db = null;
+  _adapter = null;
+  _initPromise = null;
 }
 
+/** Re-exported so existing tests that do `initializeSchema(db)` keep working
+ *  against a raw better-sqlite3 instance. The Postgres path uses
+ *  `initializePostgresSchema` instead — see schema-postgres.ts. */
 export function initializeSchema(db: Database.Database) {
   db.exec(`
     -- Users: human accounts for dashboard auth
@@ -59,6 +126,8 @@ export function initializeSchema(db: Database.Database) {
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       display_name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'admin'
+        CHECK(role IN ('admin','operator','viewer')),
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
@@ -76,15 +145,55 @@ export function initializeSchema(db: Database.Database) {
       name TEXT NOT NULL,
       description TEXT,
       api_key_hash TEXT NOT NULL,
+      max_concurrent_runs INTEGER NOT NULL DEFAULT 1 CHECK(max_concurrent_runs BETWEEN 1 AND 10),
+      shell_command TEXT,
+      shell_cwd TEXT,
+      permission_mode TEXT NOT NULL DEFAULT 'unrestricted'
+        CHECK(permission_mode IN ('safe','custom','unrestricted')),
+      api_base_url TEXT,
+      api_key_env TEXT,
+      can_read_docs INTEGER NOT NULL DEFAULT 1,
+      can_write_docs INTEGER NOT NULL DEFAULT 1,
+      can_read_databases INTEGER NOT NULL DEFAULT 1,
+      can_write_databases INTEGER NOT NULL DEFAULT 1,
+      can_read_env_vars INTEGER NOT NULL DEFAULT 1,
+      can_create_runs INTEGER NOT NULL DEFAULT 1,
+      can_create_handoffs INTEGER NOT NULL DEFAULT 1,
+      can_post_activity INTEGER NOT NULL DEFAULT 1,
+      can_update_status INTEGER NOT NULL DEFAULT 1,
+      can_use_shell INTEGER NOT NULL DEFAULT 1,
       last_polled_at INTEGER,
       created_at INTEGER NOT NULL DEFAULT (unixepoch()),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
-    -- Jobs: recurring responsibilities assigned to an agent
+    -- Teams: groupings of multiple agents for parallel multi-role work
+    CREATE TABLE IF NOT EXISTS teams (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Team membership with per-team role assignment
+    CREATE TABLE IF NOT EXISTS team_agents (
+      team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'custom' CHECK(role IN ('researcher','builder','reviewer','debugger','custom')),
+      custom_role TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      PRIMARY KEY (team_id, agent_id)
+    );
+
+    -- Jobs: recurring responsibilities assigned to an agent or team
+    -- agent_id is nullable to support workflow-only jobs and team-assigned jobs
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
-      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
+      team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+      preferred_role TEXT,
+      role_fallback TEXT NOT NULL DEFAULT 'any' CHECK(role_fallback IN ('any','wait')),
       name TEXT NOT NULL,
       description TEXT,
       instructions TEXT,
@@ -207,15 +316,12 @@ export function initializeSchema(db: Database.Database) {
       run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
       activity_id TEXT REFERENCES run_activity(id) ON DELETE SET NULL,
       kind TEXT NOT NULL CHECK(kind IN ('file','embed')),
-      -- file kind:
       filename TEXT,
       storage_path TEXT,
       mime_type TEXT,
       size_bytes INTEGER,
-      -- embed kind:
       url TEXT,
       embed_provider TEXT,
-      -- both:
       title TEXT,
       uploaded_by_type TEXT CHECK(uploaded_by_type IN ('user','agent')),
       uploaded_by_id TEXT,
@@ -233,6 +339,20 @@ export function initializeSchema(db: Database.Database) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    -- Run costs: token usage and estimated USD cost per run (one row per run, idempotent)
+    CREATE TABLE IF NOT EXISTS run_costs (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE CASCADE,
+      provider TEXT,
+      model TEXT,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      total_tokens INTEGER,
+      estimated_cost_usd REAL,
+      pricing_known INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- Projects: optional organizational grouping (view layer only)
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
@@ -241,7 +361,6 @@ export function initializeSchema(db: Database.Database) {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
-    -- Project linking tables (many-to-many)
     CREATE TABLE IF NOT EXISTS project_agents (
       project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
       agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -321,6 +440,155 @@ export function initializeSchema(db: Database.Database) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    -- Run handoffs: one run hands work to another agent or team. Snapshots
+    -- keep the handoff legible even if the source run is later deleted.
+    CREATE TABLE IF NOT EXISTS run_handoffs (
+      id TEXT PRIMARY KEY,
+      source_run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+      source_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+      target_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+      target_team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+      target_role TEXT,
+      target_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+      target_run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+      message TEXT NOT NULL,
+      source_run_name_snapshot TEXT,
+      source_agent_name_snapshot TEXT,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','accepted','completed','cancelled')),
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Workflows ("Company OS"): top-level pipeline definitions that orchestrate
+    -- existing jobs + runs. A workflow has ordered steps; starting a workflow
+    -- creates a workflow_run, which spawns step_runs that point at normal
+    -- runs.id. The advancement hook lives in updateRunStatusAsync(Async).
+    CREATE TABLE IF NOT EXISTS workflows (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      department TEXT,
+      status TEXT NOT NULL DEFAULT 'draft'
+        CHECK(status IN ('draft','active','paused','archived')),
+      autonomy_level TEXT NOT NULL DEFAULT 'supervised'
+        CHECK(autonomy_level IN ('manual','supervised','autonomous')),
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_steps (
+      id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+      step_order INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      instructions TEXT NOT NULL DEFAULT '',
+      assigned_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+      assigned_team_id TEXT REFERENCES teams(id) ON DELETE SET NULL,
+      preferred_role TEXT,
+      role_fallback TEXT NOT NULL DEFAULT 'any'
+        CHECK(role_fallback IN ('any','wait')),
+      requires_human_approval INTEGER NOT NULL DEFAULT 0,
+      approval_type TEXT NOT NULL DEFAULT 'none'
+        CHECK(approval_type IN ('none','before_step','after_step')),
+      risky INTEGER NOT NULL DEFAULT 0,
+      timeout_minutes INTEGER NOT NULL DEFAULT 30,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      id TEXT PRIMARY KEY,
+      workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'running'
+        CHECK(status IN ('running','waiting_for_approval','done','failed','rejected')),
+      current_step_id TEXT REFERENCES workflow_steps(id) ON DELETE SET NULL,
+      started_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      input_payload TEXT,
+      started_at INTEGER,
+      completed_at INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_step_runs (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+      step_id TEXT NOT NULL REFERENCES workflow_steps(id) ON DELETE CASCADE,
+      step_order INTEGER NOT NULL,
+      job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+      run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','waiting_approval_before','running','waiting_approval_after','done','failed','skipped','rejected','needs_changes')),
+      approval_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      approval_at INTEGER,
+      approval_comment TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_run_activity (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+      step_run_id TEXT REFERENCES workflow_step_runs(id) ON DELETE SET NULL,
+      author_type TEXT NOT NULL,
+      author_id TEXT,
+      author_name TEXT,
+      kind TEXT NOT NULL CHECK(kind IN ('comment','approve','reject','request_changes','status','start','finish')),
+      content TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Autonomy policies: declarative rules ("send_email always needs approval",
+    -- "deploy_code never auto-runs in Engineering") applied uniformly across
+    -- workflow steps, agent tool calls, and run cost ceilings. Composes with
+    -- the existing per-agent permission/tool layer rather than replacing it.
+    CREATE TABLE IF NOT EXISTS autonomy_policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      scope_type TEXT NOT NULL
+        CHECK(scope_type IN ('global','department','workflow','agent','team')),
+      scope_id TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS policy_rules (
+      id TEXT PRIMARY KEY,
+      policy_id TEXT NOT NULL REFERENCES autonomy_policies(id) ON DELETE CASCADE,
+      action_type TEXT NOT NULL,
+      risk_level TEXT NOT NULL
+        CHECK(risk_level IN ('low','medium','high','critical')),
+      require_approval INTEGER NOT NULL DEFAULT 0,
+      max_cost_usd REAL,
+      allowed_roles TEXT,
+      approval_roles TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(policy_id, action_type)
+    );
+
+    CREATE TABLE IF NOT EXISTS approval_requests (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL
+        CHECK(source_type IN ('run','workflow_run','workflow_step','tool_call','cost')),
+      source_id TEXT NOT NULL,
+      requested_by_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+      action_type TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      reason TEXT,
+      payload_json TEXT,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','approved','rejected','expired')),
+      approved_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      approval_comment TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      resolved_at INTEGER
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_attachment_processing_attachment ON attachment_processing(attachment_id);
     CREATE INDEX IF NOT EXISTS idx_attachment_processing_run ON attachment_processing(run_id);
@@ -331,29 +599,47 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
     CREATE INDEX IF NOT EXISTS idx_run_activity_run ON run_activity(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_output_run ON run_output(run_id);
-
     CREATE INDEX IF NOT EXISTS idx_run_attachments_run ON run_attachments(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_attachments_activity ON run_attachments(activity_id);
+    CREATE INDEX IF NOT EXISTS idx_run_costs_run ON run_costs(run_id);
     CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id);
     CREATE INDEX IF NOT EXISTS idx_database_migrations_db ON database_migrations(database_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
     CREATE INDEX IF NOT EXISTS idx_run_activity_run_time ON run_activity(run_id, created_at);
-
     CREATE INDEX IF NOT EXISTS idx_captain_conversations_user ON captain_conversations(user_id);
     CREATE INDEX IF NOT EXISTS idx_captain_messages_conversation ON captain_messages(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_captain_output_conversation ON captain_output(conversation_id);
+
+    CREATE INDEX IF NOT EXISTS idx_team_agents_team ON team_agents(team_id);
+    CREATE INDEX IF NOT EXISTS idx_team_agents_agent ON team_agents(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_jobs_team ON jobs(team_id);
+
+    CREATE INDEX IF NOT EXISTS idx_run_handoffs_source ON run_handoffs(source_run_id);
+    CREATE INDEX IF NOT EXISTS idx_run_handoffs_target_run ON run_handoffs(target_run_id);
+    CREATE INDEX IF NOT EXISTS idx_run_handoffs_target_job ON run_handoffs(target_job_id);
+
+    CREATE INDEX IF NOT EXISTS idx_workflow_steps_workflow ON workflow_steps(workflow_id, step_order);
+    CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow ON workflow_runs(workflow_id);
+    CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+    CREATE INDEX IF NOT EXISTS idx_workflow_step_runs_workflow_run ON workflow_step_runs(workflow_run_id, step_order);
+    CREATE INDEX IF NOT EXISTS idx_workflow_step_runs_run ON workflow_step_runs(run_id);
+    CREATE INDEX IF NOT EXISTS idx_workflow_run_activity_run ON workflow_run_activity(workflow_run_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_autonomy_policies_scope ON autonomy_policies(scope_type, scope_id, enabled);
+    CREATE INDEX IF NOT EXISTS idx_policy_rules_policy ON policy_rules(policy_id);
+    CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_approval_requests_source ON approval_requests(source_type, source_id);
   `);
 
   // Migrations: drop agent_id from docs (now top-level)
-  const docCols = db.prepare(`PRAGMA table_info(docs)`).all() as any[];
-  if (docCols.some((c: any) => c.name === "agent_id")) {
+  const docCols = db.prepare(`PRAGMA table_info(docs)`).all() as { name: string }[];
+  if (docCols.some(c => c.name === "agent_id")) {
     db.exec(`DROP INDEX IF EXISTS idx_docs_agent`);
     db.exec(`ALTER TABLE docs DROP COLUMN agent_id`);
   }
 
   // Migrations: add 'pending' to runs status CHECK constraint
-  // SQLite CHECK constraints can't be altered, so we recreate the table if needed
-  const runCheck = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
+  const runCheck = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as { sql?: string } | undefined;
   if (runCheck?.sql && !runCheck.sql.includes("pending")) {
     db.exec(`
       DROP TABLE IF EXISTS runs_new;
@@ -377,16 +663,16 @@ export function initializeSchema(db: Database.Database) {
   }
 
   // Migrations: add one_off and timeout_minutes columns to jobs
-  const jobCols = db.prepare(`PRAGMA table_info(jobs)`).all() as any[];
-  if (!jobCols.some((c: any) => c.name === "one_off")) {
+  const jobCols = db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[];
+  if (!jobCols.some(c => c.name === "one_off")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN one_off INTEGER NOT NULL DEFAULT 0`);
   }
-  if (!jobCols.some((c: any) => c.name === "timeout_minutes")) {
+  if (!jobCols.some(c => c.name === "timeout_minutes")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN timeout_minutes INTEGER NOT NULL DEFAULT 30`);
   }
 
   // Migrations: add 'scheduled' status and scheduled_for column to runs
-  const runCheck2 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
+  const runCheck2 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as { sql?: string } | undefined;
   if (runCheck2?.sql && !runCheck2.sql.includes("scheduled")) {
     db.exec(`
       DROP TABLE IF EXISTS runs_new;
@@ -412,7 +698,7 @@ export function initializeSchema(db: Database.Database) {
   }
 
   // Migrations: add 'killed' status and kill_requested_at column to runs
-  const runCheck3 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as any;
+  const runCheck3 = db.prepare(`SELECT sql FROM sqlite_master WHERE name = 'runs'`).get() as { sql?: string } | undefined;
   if (runCheck3?.sql && !runCheck3.sql.includes("killed")) {
     db.exec(`
       DROP TABLE IF EXISTS runs_new;
@@ -451,43 +737,43 @@ export function initializeSchema(db: Database.Database) {
   }
 
   // Migrations: add type, cli, model columns to agents table for harbour agents
-  const agentCols = db.prepare(`PRAGMA table_info(agents)`).all() as any[];
-  if (!agentCols.some((c: any) => c.name === "type")) {
+  const agentCols = db.prepare(`PRAGMA table_info(agents)`).all() as { name: string }[];
+  if (!agentCols.some(c => c.name === "type")) {
     db.exec(`ALTER TABLE agents ADD COLUMN type TEXT NOT NULL DEFAULT 'external'`);
   }
-  if (!agentCols.some((c: any) => c.name === "cli")) {
+  if (!agentCols.some(c => c.name === "cli")) {
     db.exec(`ALTER TABLE agents ADD COLUMN cli TEXT`);
   }
-  if (!agentCols.some((c: any) => c.name === "model")) {
+  if (!agentCols.some(c => c.name === "model")) {
     db.exec(`ALTER TABLE agents ADD COLUMN model TEXT`);
   }
-  if (!agentCols.some((c: any) => c.name === "thinking")) {
+  if (!agentCols.some(c => c.name === "thinking")) {
     db.exec(`ALTER TABLE agents ADD COLUMN thinking TEXT`);
   }
-  if (!agentCols.some((c: any) => c.name === "remote")) {
+  if (!agentCols.some(c => c.name === "remote")) {
     db.exec(`ALTER TABLE agents ADD COLUMN remote INTEGER NOT NULL DEFAULT 0`);
   }
-  if (!agentCols.some((c: any) => c.name === "eager")) {
+  if (!agentCols.some(c => c.name === "eager")) {
     db.exec(`ALTER TABLE agents ADD COLUMN eager INTEGER NOT NULL DEFAULT 0`);
   }
 
   // Migrations: add pinned column to docs table
-  const docCols2 = db.prepare(`PRAGMA table_info(docs)`).all() as any[];
-  if (!docCols2.some((c: any) => c.name === "pinned")) {
+  const docCols2 = db.prepare(`PRAGMA table_info(docs)`).all() as { name: string }[];
+  if (!docCols2.some(c => c.name === "pinned")) {
     db.exec(`ALTER TABLE docs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
   }
 
   // Migrations: add model and thinking columns to jobs table
-  const jobCols2 = db.prepare(`PRAGMA table_info(jobs)`).all() as any[];
-  if (!jobCols2.some((c: any) => c.name === "model")) {
+  const jobCols2 = db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[];
+  if (!jobCols2.some(c => c.name === "model")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN model TEXT`);
   }
-  if (!jobCols2.some((c: any) => c.name === "thinking")) {
+  if (!jobCols2.some(c => c.name === "thinking")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN thinking TEXT`);
   }
 
   // Migrations: admin API keys table
-  const adminKeyCols = db.prepare(`PRAGMA table_info(admin_api_keys)`).all() as any[];
+  const adminKeyCols = db.prepare(`PRAGMA table_info(admin_api_keys)`).all() as { name: string }[];
   if (adminKeyCols.length === 0) {
     db.exec(`
       CREATE TABLE admin_api_keys (
@@ -503,29 +789,29 @@ export function initializeSchema(db: Database.Database) {
   }
 
   // Migrations: add extra_instructions, session_id, session_cwd columns to runs
-  const runCols = db.prepare(`PRAGMA table_info(runs)`).all() as any[];
-  if (!runCols.some((c: any) => c.name === "extra_instructions")) {
+  const runCols = db.prepare(`PRAGMA table_info(runs)`).all() as { name: string }[];
+  if (!runCols.some(c => c.name === "extra_instructions")) {
     db.exec(`ALTER TABLE runs ADD COLUMN extra_instructions TEXT`);
   }
-  if (!runCols.some((c: any) => c.name === "session_id")) {
+  if (!runCols.some(c => c.name === "session_id")) {
     db.exec(`ALTER TABLE runs ADD COLUMN session_id TEXT`);
   }
-  if (!runCols.some((c: any) => c.name === "session_cwd")) {
+  if (!runCols.some(c => c.name === "session_cwd")) {
     db.exec(`ALTER TABLE runs ADD COLUMN session_cwd TEXT`);
   }
 
   // Migrations: rename check_command → workflow_command, add workflow_only
-  const jobCols3 = db.prepare(`PRAGMA table_info(jobs)`).all() as any[];
-  if (jobCols3.some((c: any) => c.name === "check_command")) {
+  const jobCols3 = db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[];
+  if (jobCols3.some(c => c.name === "check_command")) {
     db.exec(`ALTER TABLE jobs RENAME COLUMN check_command TO workflow_command`);
   }
-  if (!jobCols3.some((c: any) => c.name === "workflow_only")) {
+  if (!jobCols3.some(c => c.name === "workflow_only")) {
     db.exec(`ALTER TABLE jobs ADD COLUMN workflow_only INTEGER NOT NULL DEFAULT 0`);
   }
 
   // Migration: make agent_id nullable on jobs (for workflow-only jobs without an agent)
-  const jobAgentCol = (db.prepare(`PRAGMA table_info(jobs)`).all() as any[])
-    .find((c: any) => c.name === "agent_id");
+  const jobAgentCol = (db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string; notnull: number }[])
+    .find(c => c.name === "agent_id");
   if (jobAgentCol?.notnull === 1) {
     db.exec(`
       CREATE TABLE jobs_new (
@@ -556,8 +842,8 @@ export function initializeSchema(db: Database.Database) {
   }
 
   // Migration: make agent_id nullable on runs (for agentless workflow runs)
-  const runAgentCol = (db.prepare(`PRAGMA table_info(runs)`).all() as any[])
-    .find((c: any) => c.name === "agent_id");
+  const runAgentCol = (db.prepare(`PRAGMA table_info(runs)`).all() as { name: string; notnull: number }[])
+    .find(c => c.name === "agent_id");
   if (runAgentCol?.notnull === 1) {
     db.exec(`
       CREATE TABLE runs_new (
@@ -584,6 +870,72 @@ export function initializeSchema(db: Database.Database) {
     `);
   }
 
+  // Migrations: add role column to users (default 'admin' so existing users
+  // keep full access). RBAC: admin / operator / viewer.
+  const userColsRole = db.prepare(`PRAGMA table_info(users)`).all() as { name: string }[];
+  if (!userColsRole.some(c => c.name === "role")) {
+    db.exec(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'`);
+  }
+
+  // Migrations: add max_concurrent_runs column to agents (default 1, range 1..10)
+  const agentColsConcurrency = db.prepare(`PRAGMA table_info(agents)`).all() as { name: string }[];
+  if (!agentColsConcurrency.some(c => c.name === "max_concurrent_runs")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN max_concurrent_runs INTEGER NOT NULL DEFAULT 1`);
+  }
+  if (!agentColsConcurrency.some(c => c.name === "shell_command")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN shell_command TEXT`);
+  }
+  if (!agentColsConcurrency.some(c => c.name === "shell_cwd")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN shell_cwd TEXT`);
+  }
+
+  // Migrations: add permission_mode column to agents. Existing rows are
+  // backfilled to 'unrestricted' to preserve today's behavior (Claude:
+  // --dangerously-skip-permissions, Codex: --dangerously-bypass-...,
+  // Gemini: --yolo). New Claude agents created from the dashboard default
+  // to 'safe' — that logic lives in createAgent, not the column default.
+  if (!agentColsConcurrency.some(c => c.name === "permission_mode")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'unrestricted'`);
+  }
+
+  // Migrations: tool permissions + API-agent fields. Existing agents
+  // backfill to all-permissions-on so behavior is unchanged. The api_*
+  // columns stay null for non-api agents.
+  const agentColsTools = db.prepare(`PRAGMA table_info(agents)`).all() as { name: string }[];
+  if (!agentColsTools.some(c => c.name === "api_base_url")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN api_base_url TEXT`);
+  }
+  if (!agentColsTools.some(c => c.name === "api_key_env")) {
+    db.exec(`ALTER TABLE agents ADD COLUMN api_key_env TEXT`);
+  }
+  for (const col of [
+    "can_read_docs", "can_write_docs",
+    "can_read_databases", "can_write_databases",
+    "can_read_env_vars",
+    "can_create_runs", "can_create_handoffs",
+    "can_post_activity", "can_update_status",
+    "can_use_shell",
+  ]) {
+    if (!agentColsTools.some(c => c.name === col)) {
+      db.exec(`ALTER TABLE agents ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 1`);
+    }
+  }
+
+  // Migrations: teams + team_agents tables (created above for fresh installs;
+  // CREATE TABLE IF NOT EXISTS in the canonical block covers existing dbs too)
+
+  // Migrations: add team_id, preferred_role, role_fallback columns to jobs
+  const jobColsTeam = db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[];
+  if (!jobColsTeam.some(c => c.name === "team_id")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN team_id TEXT REFERENCES teams(id) ON DELETE SET NULL`);
+  }
+  if (!jobColsTeam.some(c => c.name === "preferred_role")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN preferred_role TEXT`);
+  }
+  if (!jobColsTeam.some(c => c.name === "role_fallback")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN role_fallback TEXT NOT NULL DEFAULT 'any'`);
+  }
+
   // Ensure encryption key exists (generates on first run)
   try { encrypt("init"); } catch { /* non-fatal */ }
 
@@ -594,4 +946,48 @@ export function initializeSchema(db: Database.Database) {
     db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`).run("timezone", systemTz);
   }
   db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`).run("signup_enabled", "true");
+
+  seedDefaultAutonomyPolicySqlite(db);
 }
+
+/**
+ * Seed a single global "Default Safety Policy" if none exists. Idempotent —
+ * runs on every `initializeSchema` but skips when any global policy is present,
+ * so users who delete or customize the seed don't have it re-created.
+ */
+function seedDefaultAutonomyPolicySqlite(db: Database.Database) {
+  const has = db.prepare(`SELECT 1 FROM autonomy_policies WHERE scope_type = 'global' LIMIT 1`).get();
+  if (has) return;
+
+  const policyId = "ap_default_global";
+  db.prepare(
+    `INSERT INTO autonomy_policies (id, name, description, scope_type, scope_id, enabled) VALUES (?, ?, ?, 'global', NULL, 1)`,
+  ).run(policyId, "Default Safety Policy", "Built-in baseline. High-risk actions require approval; medium spend is auto-allowed up to $10.");
+
+  // (action_type, risk_level, require_approval, max_cost_usd)
+  const seed: [string, "low" | "medium" | "high" | "critical", number, number | null][] = [
+    ["send_email",         "high",     1, null],
+    ["send_message",       "high",     1, null],
+    ["contact_customer",   "high",     1, null],
+    ["spend_money",        "medium",   0, 10],
+    ["deploy_code",        "high",     1, null],
+    ["merge_pr",           "high",     1, null],
+    ["delete_data",        "critical", 1, null],
+    ["modify_production",  "high",     1, null],
+    ["use_secret",         "high",     1, null],
+    ["external_api_call",  "high",     1, null],
+    ["create_handoff",     "high",     1, null],
+    ["update_status",      "low",      0, null],
+    ["custom",             "high",     1, null],
+  ];
+
+  const ruleStmt = db.prepare(
+    `INSERT INTO policy_rules (id, policy_id, action_type, risk_level, require_approval, max_cost_usd) VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+  for (const [action, risk, requireApproval, maxCost] of seed) {
+    ruleStmt.run(`pr_default_${action}`, policyId, action, risk, requireApproval, maxCost);
+  }
+}
+
+export type { DbAdapter };
+export { SqliteAdapter, PostgresAdapter, wrapSqliteDb };

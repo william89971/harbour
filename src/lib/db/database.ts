@@ -1,4 +1,6 @@
-import { getDb } from "./schema";
+import { getDb, getDbAsync } from "./schema";
+import { nowSql } from "./dialect";
+import type { DbAdapter } from "./adapter";
 import { v4 as uuid } from "uuid";
 
 // --- Types ---
@@ -324,5 +326,275 @@ export function getJobsForDatabase(databaseId: string) {
     JOIN jobs j ON jd.job_id = j.id
     WHERE jd.database_id = ?
   `).all(databaseId);
+}
+
+// ---------------------------------------------------------------------------
+// Async variants — cross-backend (SQLite + Postgres) via the adapter layer.
+// PRAGMA-style introspection is unavailable on PG, so column lookups go
+// through information_schema with a dialect switch.
+// ---------------------------------------------------------------------------
+
+/** List columns on a user-managed table — cross-backend. Filters _id. */
+async function listTableColumns(db: DbAdapter, tableName: string): Promise<ColumnInfo[]> {
+  if (db.dialect === "postgres") {
+    const rows = await db.all<{ column_name: string; data_type: string; is_nullable: string; column_default: string | null; ordinal_position: number }>(
+      `SELECT column_name, data_type, is_nullable, column_default, ordinal_position
+       FROM information_schema.columns
+       WHERE table_name = ? ORDER BY ordinal_position`,
+      [tableName],
+    );
+    return rows.filter(r => r.column_name !== "_id").map((r, i) => ({
+      cid: i,
+      name: r.column_name,
+      type: r.data_type,
+      notnull: r.is_nullable === "NO" ? 1 : 0,
+      dflt_value: r.column_default,
+      pk: 0,
+    }));
+  }
+  // SQLite path uses raw pragma — exposed via the sqlite-adapter's .db handle.
+  // We have access through the SqliteAdapter wrapping; access via the raw
+  // adapter would require exposing it. Simpler: fetch via PRAGMA call which
+  // SQLite accepts as a regular SELECT-shaped query.
+  const rows = await db.all<ColumnInfo>(`PRAGMA table_info("${tableName}")`);
+  return rows.filter(r => r.name !== "_id");
+}
+
+export async function createDatabaseAsync(name: string, columns: ColumnDef[]): Promise<DatabaseMeta & { columns: ColumnInfo[] }> {
+  const db = await getDbAsync();
+  const id = uuid();
+  const safeName = sanitizeName(name);
+  const tableName = toTableName(name);
+
+  if (!columns.length) throw new Error("At least one column is required");
+  const colDefs = columns.map(c => {
+    const colName = safeColumnName(c.name);
+    // Map TEXT/INTEGER/REAL into PG-compatible types where needed
+    const pgType = c.type === "REAL" ? "DOUBLE PRECISION" : c.type;
+    const type = db.dialect === "postgres" ? pgType : c.type;
+    let def = `"${colName}" ${type}`;
+    if (c.required) def += " NOT NULL";
+    if (c.default !== undefined && c.default !== null) {
+      def += ` DEFAULT ${typeof c.default === "string" ? `'${c.default.replace(/'/g, "''")}'` : c.default}`;
+    }
+    return def;
+  });
+
+  const pkClause = db.dialect === "postgres"
+    ? `_id BIGSERIAL PRIMARY KEY`
+    : `_id INTEGER PRIMARY KEY AUTOINCREMENT`;
+  const createSql = `CREATE TABLE "${tableName}" (${pkClause}, ${colDefs.join(", ")})`;
+
+  await db.transaction(async (tx) => {
+    await tx.run(`INSERT INTO databases (id, name, table_name) VALUES (?, ?, ?)`, [id, safeName, tableName]);
+    await tx.exec(createSql);
+    await tx.run(
+      `INSERT INTO database_migrations (id, database_id, version, description, sql) VALUES (?, ?, 1, ?, ?)`,
+      [uuid(), id, "Create table", createSql],
+    );
+  });
+
+  const meta = await getDatabaseByIdAsync(id);
+  return meta!;
+}
+
+export async function getDatabaseByIdAsync(id: string): Promise<(DatabaseMeta & { columns: ColumnInfo[] }) | null> {
+  const db = await getDbAsync();
+  const meta = await db.get<DatabaseMeta>(`SELECT * FROM databases WHERE id = ?`, [id]);
+  if (!meta) return null;
+  const columns = await listTableColumns(db, meta.table_name);
+  return { ...meta, columns };
+}
+
+export async function getDatabaseByNameAsync(name: string): Promise<(DatabaseMeta & { columns: ColumnInfo[] }) | null> {
+  const db = await getDbAsync();
+  const safeName = sanitizeName(name);
+  const meta = await db.get<DatabaseMeta>(`SELECT * FROM databases WHERE name = ?`, [safeName]);
+  if (!meta) return null;
+  const columns = await listTableColumns(db, meta.table_name);
+  return { ...meta, columns };
+}
+
+export async function listDatabasesAsync(projectId?: string) {
+  const db = await getDbAsync();
+  const metas = projectId
+    ? await db.all<DatabaseMeta>(`
+        SELECT * FROM databases
+        WHERE id IN (SELECT database_id FROM project_databases WHERE project_id = ?)
+        ORDER BY name ASC
+      `, [projectId])
+    : await db.all<DatabaseMeta>(`SELECT * FROM databases ORDER BY name ASC`);
+
+  const result = [];
+  for (const meta of metas) {
+    const countRow = await db.get<{ count: number }>(`SELECT COUNT(*) as count FROM "${meta.table_name}"`);
+    const jobs = await db.all<{ id: string; name: string }>(`
+      SELECT j.id, j.name FROM job_databases jd
+      JOIN jobs j ON jd.job_id = j.id
+      WHERE jd.database_id = ?
+    `, [meta.id]);
+    result.push({ ...meta, row_count: countRow?.count || 0, jobs });
+  }
+  return result;
+}
+
+export async function deleteDatabaseAsync(id: string) {
+  const db = await getDbAsync();
+  const meta = await db.get<{ table_name: string }>(`SELECT table_name FROM databases WHERE id = ?`, [id]);
+  if (!meta) return;
+  await db.transaction(async (tx) => {
+    await tx.exec(`DROP TABLE IF EXISTS "${meta.table_name}"`);
+    await tx.run(`DELETE FROM databases WHERE id = ?`, [id]);
+  });
+}
+
+export async function addColumnAsync(databaseId: string, column: ColumnDef) {
+  const db = await getDbAsync();
+  const meta = await db.get<DatabaseMeta>(`SELECT * FROM databases WHERE id = ?`, [databaseId]);
+  if (!meta) throw new Error("Database not found");
+
+  const colName = safeColumnName(column.name);
+  const pgType = column.type === "REAL" ? "DOUBLE PRECISION" : column.type;
+  const colType = db.dialect === "postgres" ? pgType : column.type;
+  let alterSql = `ALTER TABLE "${meta.table_name}" ADD COLUMN "${colName}" ${colType}`;
+  if (column.default !== undefined && column.default !== null) {
+    alterSql += ` DEFAULT ${typeof column.default === "string" ? `'${column.default.replace(/'/g, "''")}'` : column.default}`;
+  }
+  if (column.required) {
+    if (column.default === undefined || column.default === null) {
+      throw new Error("Required columns added via ALTER TABLE must have a default value");
+    }
+    alterSql += " NOT NULL";
+  }
+
+  const versionRow = await db.get<{ v: number | null }>(
+    `SELECT MAX(version) as v FROM database_migrations WHERE database_id = ?`, [databaseId],
+  );
+  const version = versionRow?.v || 0;
+
+  await db.transaction(async (tx) => {
+    await tx.exec(alterSql);
+    await tx.run(
+      `INSERT INTO database_migrations (id, database_id, version, description, sql) VALUES (?, ?, ?, ?, ?)`,
+      [uuid(), databaseId, version + 1, `Add column: ${colName}`, alterSql],
+    );
+    await tx.run(`UPDATE databases SET updated_at = ${nowSql(tx)} WHERE id = ?`, [databaseId]);
+  });
+
+  return getDatabaseByIdAsync(databaseId);
+}
+
+export async function getDatabaseMigrationsAsync(databaseId: string) {
+  const db = await getDbAsync();
+  return db.all(`SELECT * FROM database_migrations WHERE database_id = ? ORDER BY version ASC`, [databaseId]);
+}
+
+export async function getRowsAsync(databaseId: string, opts?: {
+  limit?: number;
+  offset?: number;
+  orderBy?: string;
+  order?: "ASC" | "DESC";
+}) {
+  const db = await getDbAsync();
+  const meta = await db.get<{ table_name: string }>(`SELECT table_name FROM databases WHERE id = ?`, [databaseId]);
+  if (!meta) return null;
+
+  const limit = opts?.limit ?? 100;
+  const offset = opts?.offset ?? 0;
+  let sql = `SELECT * FROM "${meta.table_name}"`;
+
+  if (opts?.orderBy) {
+    const cols = await listTableColumns(db, meta.table_name);
+    const valid = cols.map(c => c.name).concat(["_id"]);
+    if (!valid.includes(opts.orderBy)) {
+      throw new Error(`Invalid orderBy column: "${opts.orderBy}"`);
+    }
+    const dir = opts?.order === "ASC" ? "ASC" : "DESC";
+    sql += ` ORDER BY "${opts.orderBy}" ${dir}`;
+  } else {
+    sql += ` ORDER BY _id DESC`;
+  }
+
+  sql += ` LIMIT ? OFFSET ?`;
+  const rows = await db.all(sql, [limit, offset]);
+  const countRow = await db.get<{ count: number }>(`SELECT COUNT(*) as count FROM "${meta.table_name}"`);
+  return { rows, total: countRow?.count || 0, limit, offset };
+}
+
+export async function insertRowsAsync(databaseId: string, rows: Record<string, unknown>[]) {
+  const db = await getDbAsync();
+  const meta = await db.get<{ table_name: string }>(`SELECT table_name FROM databases WHERE id = ?`, [databaseId]);
+  if (!meta) throw new Error("Database not found");
+  if (!rows.length) return { inserted: 0 };
+
+  const cols = await listTableColumns(db, meta.table_name);
+  const validCols = new Set(cols.map(c => c.name));
+
+  let inserted = 0;
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      const keys = Object.keys(row).filter(k => validCols.has(k));
+      if (!keys.length) continue;
+      const placeholders = keys.map(() => "?").join(", ");
+      const colNames = keys.map(k => `"${k}"`).join(", ");
+      await tx.run(
+        `INSERT INTO "${meta.table_name}" (${colNames}) VALUES (${placeholders})`,
+        keys.map(k => (row[k] ?? null) as string | number | null),
+      );
+      inserted++;
+    }
+    await tx.run(`UPDATE databases SET updated_at = ${nowSql(tx)} WHERE id = ?`, [databaseId]);
+  });
+  return { inserted };
+}
+
+export async function updateRowAsync(databaseId: string, rowId: number, data: Record<string, unknown>) {
+  const db = await getDbAsync();
+  const meta = await db.get<{ table_name: string }>(`SELECT table_name FROM databases WHERE id = ?`, [databaseId]);
+  if (!meta) throw new Error("Database not found");
+
+  const cols = await listTableColumns(db, meta.table_name);
+  const validCols = new Set(cols.map(c => c.name));
+  const keys = Object.keys(data).filter(k => validCols.has(k));
+  if (!keys.length) throw new Error("No valid columns to update");
+
+  const sets = keys.map(k => `"${k}" = ?`).join(", ");
+  const values = keys.map(k => (data[k] ?? null) as string | number | null);
+
+  await db.transaction(async (tx) => {
+    await tx.run(`UPDATE "${meta.table_name}" SET ${sets} WHERE _id = ?`, [...values, rowId]);
+    await tx.run(`UPDATE databases SET updated_at = ${nowSql(tx)} WHERE id = ?`, [databaseId]);
+  });
+
+  return db.get(`SELECT * FROM "${meta.table_name}" WHERE _id = ?`, [rowId]);
+}
+
+export async function deleteRowAsync(databaseId: string, rowId: number) {
+  const db = await getDbAsync();
+  const meta = await db.get<{ table_name: string }>(`SELECT table_name FROM databases WHERE id = ?`, [databaseId]);
+  if (!meta) throw new Error("Database not found");
+  await db.transaction(async (tx) => {
+    await tx.run(`DELETE FROM "${meta.table_name}" WHERE _id = ?`, [rowId]);
+    await tx.run(`UPDATE databases SET updated_at = ${nowSql(tx)} WHERE id = ?`, [databaseId]);
+  });
+}
+
+export async function linkDatabaseToJobAsync(jobId: string, databaseId: string) {
+  const db = await getDbAsync();
+  await db.run(`INSERT INTO job_databases (job_id, database_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, [jobId, databaseId]);
+}
+
+export async function unlinkDatabaseFromJobAsync(jobId: string, databaseId: string) {
+  const db = await getDbAsync();
+  await db.run(`DELETE FROM job_databases WHERE job_id = ? AND database_id = ?`, [jobId, databaseId]);
+}
+
+export async function getJobsForDatabaseAsync(databaseId: string) {
+  const db = await getDbAsync();
+  return db.all(`
+    SELECT j.id, j.name FROM job_databases jd
+    JOIN jobs j ON jd.job_id = j.id
+    WHERE jd.database_id = ?
+  `, [databaseId]);
 }
 

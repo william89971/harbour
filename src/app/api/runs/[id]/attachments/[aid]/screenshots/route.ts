@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { NextResponse } from "next/server";
 import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getRunById, getProcessingByAttachment } from "@/lib/db/queries";
+import { getRunByIdAsync, getProcessingByAttachmentAsync } from "@/lib/db/queries";
 import { uploadsDir } from "@/lib/paths";
 import { publicBaseUrl } from "@/lib/request-url";
 
@@ -10,13 +10,13 @@ export const runtime = "nodejs";
 
 export const GET = withAuth(async (req, auth, { params }) => {
   const { id, aid } = await params;
-  const run = getRunById(id);
+  const run = await getRunByIdAsync(id);
   if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
   const ownerError = requireAgentOwnership(auth, run.agent_id);
   if (ownerError) return ownerError;
 
-  const processing = getProcessingByAttachment(aid);
+  const processing = await getProcessingByAttachmentAsync(aid);
   if (!processing || !processing.screenshots_dir) {
     return NextResponse.json({ error: "No screenshots available" }, { status: 404 });
   }

@@ -1,34 +1,34 @@
 import { NextResponse } from "next/server";
-import { withAuth, requireAgentOwnership } from "@/lib/auth";
-import { getRunById, getAttachmentById, getProcessingByAttachment } from "@/lib/db/queries";
-import { deleteProcessingRecord } from "@/lib/db/video-processing";
+import { withAuth, withOperator, requireAgentOwnership } from "@/lib/auth";
+import { getRunByIdAsync, getAttachmentByIdAsync, getProcessingByAttachmentAsync } from "@/lib/db/queries";
+import { deleteProcessingRecordAsync } from "@/lib/db/video-processing";
 import { isVideoFile, processVideoAttachment } from "@/lib/video-processing";
 
 export const runtime = "nodejs";
 
 export const GET = withAuth(async (_req, auth, { params }) => {
   const { id, aid } = await params;
-  const run = getRunById(id);
+  const run = await getRunByIdAsync(id);
   if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
   const ownerError = requireAgentOwnership(auth, run.agent_id);
   if (ownerError) return ownerError;
 
-  const processing = getProcessingByAttachment(aid);
+  const processing = await getProcessingByAttachmentAsync(aid);
   if (!processing) return NextResponse.json({ error: "No processing record" }, { status: 404 });
 
   return NextResponse.json(processing);
 });
 
-export const POST = withAuth(async (_req, auth, { params }) => {
+export const POST = withOperator(async (_req, auth, { params }) => {
   const { id, aid } = await params;
-  const run = getRunById(id);
+  const run = await getRunByIdAsync(id);
   if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
   const ownerError = requireAgentOwnership(auth, run.agent_id);
   if (ownerError) return ownerError;
 
-  const att = getAttachmentById(aid);
+  const att = await getAttachmentByIdAsync(aid);
   if (!att || att.run_id !== id) {
     return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
   }
@@ -37,13 +37,13 @@ export const POST = withAuth(async (_req, auth, { params }) => {
     return NextResponse.json({ error: "Attachment is not a video" }, { status: 400 });
   }
 
-  const existing = getProcessingByAttachment(aid);
+  const existing = await getProcessingByAttachmentAsync(aid);
   if (existing) {
     if (existing.status === "queued" || existing.status === "processing") {
       return NextResponse.json({ error: "Already processing" }, { status: 409 });
     }
     // Allow retry of failed/done — delete old record and re-process
-    deleteProcessingRecord(existing.id);
+    await deleteProcessingRecordAsync(existing.id);
   }
 
   processVideoAttachment(aid, id);

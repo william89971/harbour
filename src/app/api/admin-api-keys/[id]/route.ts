@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
-import { withUserAuth } from "@/lib/auth";
-import { deleteAdminApiKey } from "@/lib/db/queries";
+import { NextResponse } from "next/server";
+import { withUserAuth, requireAdmin } from "@/lib/auth";
+import { deleteAdminApiKeyAsync } from "@/lib/db/queries";
 
-export const DELETE = withUserAuth(async (req, auth, { params }) => {
+export const DELETE = withUserAuth(async (_req, auth, { params }) => {
+  const e = requireAdmin(auth); if (e) return e;
   const { id } = await params;
-  deleteAdminApiKey(id);
+  await deleteAdminApiKeyAsync(id);
   return NextResponse.json({ ok: true });
 });

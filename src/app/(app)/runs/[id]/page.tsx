@@ -11,8 +11,35 @@ import { SectionHeader } from "@/components/app/section-header";
 import { EmptyState } from "@/components/app/empty-state";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
-import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film, Loader2, ChevronDown, ChevronRight, FileText, Image, Trash2, MoreVertical, Copy, Check } from "lucide-react";
+import { Bot, User, Cog, Send, Play, CheckCheck, Terminal, RotateCcw, Ban, Film, Loader2, ChevronDown, ChevronRight, FileText, Image, Trash2, MoreVertical, Copy, Check, DollarSign, ArrowRightLeft, ArrowDownLeft } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { RoleGate } from "@/components/app/role-gate";
+import { AutonomyApprovalsPanel } from "@/components/app/autonomy-approvals-panel";
+
+type HandoffSummary = {
+  id: string;
+  source_run_id: string | null;
+  source_agent_id: string | null;
+  target_agent_id: string | null;
+  target_team_id: string | null;
+  target_role: string | null;
+  target_job_id: string | null;
+  target_run_id: string | null;
+  message: string;
+  source_run_name_snapshot: string | null;
+  source_agent_name_snapshot: string | null;
+  status: "pending" | "accepted" | "completed" | "cancelled";
+  created_at: number;
+  // Joined fields from list query:
+  target_agent_name?: string | null;
+  target_team_name?: string | null;
+  target_run_status?: string | null;
+  source_agent_name?: string | null;
+  source_run_status?: string | null;
+  source_run_job_name?: string | null;
+};
 import { timeAgo } from "@/lib/time";
 import { StatusBadge } from "@/components/app/run-status";
 import { AttachmentComposer, type AttachmentComposerHandle } from "@/components/app/attachment-composer";
@@ -41,6 +68,13 @@ type Run = {
   session_id: string | null; session_cwd: string | null; one_off: number; job_workflow_only: number;
   created_at: number; updated_at: number; completed_at: number | null;
   kill_requested_at: number | null;
+  cost_input_tokens: number | null;
+  cost_output_tokens: number | null;
+  cost_total_tokens: number | null;
+  cost_estimated_usd: number | null;
+  cost_pricing_known: number | null;
+  cost_provider: string | null;
+  cost_model: string | null;
   activity: Activity[];
   attachments: SerializedAttachment[];
 };
@@ -429,6 +463,88 @@ export default function RunDetailPage() {
     refetchInterval: 5000,
   });
 
+  const { data: handoffs } = useQuery<{ outgoing: HandoffSummary[]; incoming: HandoffSummary | null }>({
+    queryKey: ["runs", id, "handoffs"],
+    queryFn: async () => {
+      const res = await fetch(`/api/runs/${id}/handoffs`);
+      if (!res.ok) return { outgoing: [], incoming: null };
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
+  const { data: allAgents = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["agents-list-for-handoff"],
+    queryFn: async () => {
+      const res = await fetch("/api/agents");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: false, // load lazily when the handoff dialog opens
+  });
+
+  const { data: allTeams = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["teams-list-for-handoff"],
+    queryFn: async () => {
+      const res = await fetch("/api/teams");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: false,
+  });
+
+  // Handoff dialog state
+  const [showHandoff, setShowHandoff] = useState(false);
+  const [handoffTargetKind, setHandoffTargetKind] = useState<"agent" | "team">("agent");
+  const [handoffAgentId, setHandoffAgentId] = useState("");
+  const [handoffTeamId, setHandoffTeamId] = useState("");
+  const [handoffRole, setHandoffRole] = useState("");
+  const [handoffMessage, setHandoffMessage] = useState("");
+  const [handoffSubmitting, setHandoffSubmitting] = useState(false);
+
+  async function openHandoffDialog() {
+    // Trigger the lazy queries
+    await Promise.all([
+      queryClient.fetchQuery({ queryKey: ["agents-list-for-handoff"], queryFn: async () => (await fetch("/api/agents")).json() }),
+      queryClient.fetchQuery({ queryKey: ["teams-list-for-handoff"], queryFn: async () => (await fetch("/api/teams")).json() }),
+    ]);
+    setHandoffTargetKind("agent");
+    setHandoffAgentId("");
+    setHandoffTeamId("");
+    setHandoffRole("");
+    setHandoffMessage("");
+    setShowHandoff(true);
+  }
+
+  async function submitHandoff() {
+    if (!handoffMessage.trim()) { alert("Please write a message"); return; }
+    if (handoffTargetKind === "agent" && !handoffAgentId) { alert("Pick a target agent"); return; }
+    if (handoffTargetKind === "team" && !handoffTeamId) { alert("Pick a target team"); return; }
+    setHandoffSubmitting(true);
+    try {
+      const res = await fetch(`/api/runs/${id}/handoff`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetAgentId: handoffTargetKind === "agent" ? handoffAgentId : null,
+          targetTeamId: handoffTargetKind === "team" ? handoffTeamId : null,
+          targetRole: handoffTargetKind === "team" && handoffRole ? handoffRole : null,
+          message: handoffMessage.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Handoff failed" }));
+        alert(err.error || "Handoff failed");
+        return;
+      }
+      setShowHandoff(false);
+      queryClient.invalidateQueries({ queryKey: ["runs", id, "handoffs"] });
+      queryClient.invalidateQueries({ queryKey: ["runs", id] });
+    } finally {
+      setHandoffSubmitting(false);
+    }
+  }
+
   // Clear local killing state once the runner finalizes and the run is no
   // longer 'running' — keeps the button honest across refreshes.
   useEffect(() => {
@@ -556,10 +672,17 @@ export default function RunDetailPage() {
               </Button>
             )}
             {(run.status === "failed" || run.status === "skipped" || run.status === "killed") && (
-              <Button variant="outline" size="sm" onClick={handleRetry} disabled={retrying}>
-                <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> {retrying ? "Retrying..." : "Retry"}
-              </Button>
+              <RoleGate action="mutateRun">
+                <Button variant="outline" size="sm" onClick={handleRetry} disabled={retrying}>
+                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> {retrying ? "Retrying..." : "Retry"}
+                </Button>
+              </RoleGate>
             )}
+            <RoleGate action="mutateRun">
+              <Button variant="outline" size="sm" onClick={openHandoffDialog}>
+                <ArrowRightLeft className="h-3.5 w-3.5 mr-1.5" /> Hand off
+              </Button>
+            </RoleGate>
             {run.job_id && (
               <Link href={`/jobs/${run.job_id}`}>
                 <Button variant="outline" size="sm">View Job</Button>
@@ -588,6 +711,27 @@ export default function RunDetailPage() {
         </div>
       </div>
 
+      {handoffs?.incoming && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex gap-3 items-start">
+          <ArrowDownLeft className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex-1 text-sm">
+            <p className="font-medium text-amber-700 dark:text-amber-400">Incoming handoff</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              From <span className="font-medium">{handoffs.incoming.source_agent_name || handoffs.incoming.source_agent_name_snapshot || "an agent"}</span>
+              {" "}on{" "}
+              {handoffs.incoming.source_run_id ? (
+                <Link href={`/runs/${handoffs.incoming.source_run_id}`} className="underline hover:text-foreground transition-colors">
+                  {handoffs.incoming.source_run_job_name || handoffs.incoming.source_run_name_snapshot || handoffs.incoming.source_run_id}
+                </Link>
+              ) : (
+                <span>{handoffs.incoming.source_run_name_snapshot || "(deleted run)"}</span>
+              )}
+            </p>
+            <p className="mt-1 whitespace-pre-wrap">{handoffs.incoming.message}</p>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-y-3 gap-x-4 rounded-lg border p-3">
         <div className="flex items-center gap-2 text-sm">
           {run.agent_id && run.agent_name ? (
@@ -610,7 +754,64 @@ export default function RunDetailPage() {
           <CheckCheck className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="text-muted-foreground truncate">{run.completed_at ? timeAgo(run.completed_at) : "\u2014"}</span>
         </div>
+        <div className="flex items-center gap-2 text-sm" title={
+          run.job_workflow_only
+            ? "Workflow-only run \u2014 no LLM usage"
+            : run.cost_input_tokens != null
+              ? `${(run.cost_input_tokens ?? 0).toLocaleString()} in / ${(run.cost_output_tokens ?? 0).toLocaleString()} out${run.cost_pricing_known ? "" : " \u2014 pricing not configured for this model"}`
+              : "No usage data captured"
+        }>
+          <DollarSign className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground truncate">
+            {run.job_workflow_only
+              ? "No LLM usage"
+              : run.cost_estimated_usd != null
+                ? `$${Number(run.cost_estimated_usd).toFixed(4)}`
+                : run.cost_input_tokens != null
+                  ? "Pricing N/A"
+                  : "\u2014"}
+          </span>
+        </div>
       </div>
+
+      <AutonomyApprovalsPanelStrip runId={run.id} />
+
+      {handoffs?.outgoing && handoffs.outgoing.length > 0 && (
+        <div className="space-y-2">
+          <SectionHeader>Outgoing handoffs</SectionHeader>
+          <div className="rounded-lg border divide-y">
+            {handoffs.outgoing.map(h => (
+              <Link key={h.id} href={h.target_run_id ? `/runs/${h.target_run_id}` : "#"} className="flex items-start gap-3 p-3 text-sm hover:bg-accent/50 transition-colors">
+                <ArrowRightLeft className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium truncate">
+                      {h.target_agent_name
+                        ? h.target_agent_name
+                        : h.target_team_name
+                          ? `Team ${h.target_team_name}${h.target_role ? ` (${h.target_role})` : ""}`
+                          : "deleted target"}
+                    </span>
+                    <span className={cn(
+                      "text-[10px] px-1.5 py-0.5 rounded",
+                      h.status === "completed" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+                      h.status === "accepted" && "bg-blue-500/10 text-blue-700 dark:text-blue-300",
+                      h.status === "pending" && "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                      h.status === "cancelled" && "bg-muted text-muted-foreground",
+                    )}>
+                      {h.status}
+                    </span>
+                    {h.target_run_status && (
+                      <span className="text-[10px] text-muted-foreground">target: {h.target_run_status}</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">{h.message}</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Activity Log */}
       <div className="space-y-1">
@@ -714,6 +915,129 @@ export default function RunDetailPage() {
           ) : undefined}
         />
       )}
+
+      <Dialog open={showHandoff} onOpenChange={setShowHandoff}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Hand off this run</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Target</Label>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant={handoffTargetKind === "agent" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setHandoffTargetKind("agent")}
+                >
+                  Agent
+                </Button>
+                <Button
+                  type="button"
+                  variant={handoffTargetKind === "team" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setHandoffTargetKind("team")}
+                >
+                  Team
+                </Button>
+              </div>
+            </div>
+            {handoffTargetKind === "agent" ? (
+              <div className="space-y-2">
+                <Label htmlFor="ho-agent">Agent</Label>
+                <select
+                  id="ho-agent"
+                  value={handoffAgentId}
+                  onChange={e => setHandoffAgentId(e.target.value)}
+                  className="w-full px-3 py-2 border rounded bg-background text-sm"
+                >
+                  <option value="">— select an agent —</option>
+                  {allAgents.filter(a => a.id !== run.agent_id).map(a => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="ho-team">Team</Label>
+                  <select
+                    id="ho-team"
+                    value={handoffTeamId}
+                    onChange={e => setHandoffTeamId(e.target.value)}
+                    className="w-full px-3 py-2 border rounded bg-background text-sm"
+                  >
+                    <option value="">— select a team —</option>
+                    {allTeams.map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="ho-role">Preferred role (optional)</Label>
+                  <select
+                    id="ho-role"
+                    value={handoffRole}
+                    onChange={e => setHandoffRole(e.target.value)}
+                    className="w-full px-3 py-2 border rounded bg-background text-sm"
+                  >
+                    <option value="">Any role</option>
+                    <option value="researcher">Researcher</option>
+                    <option value="builder">Builder</option>
+                    <option value="reviewer">Reviewer</option>
+                    <option value="debugger">Debugger</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">If no team member has this role, fallback semantics (&apos;any&apos;) let any team member claim once specialists are saturated.</p>
+                </div>
+              </>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="ho-msg">Message</Label>
+              <Textarea
+                id="ho-msg"
+                value={handoffMessage}
+                onChange={e => setHandoffMessage(e.target.value)}
+                placeholder="What do you need from them? (Source instructions, docs, env vars, and a snapshot of this run's activity log will be forwarded automatically.)"
+                rows={4}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowHandoff(false)} disabled={handoffSubmitting}>Cancel</Button>
+            <Button onClick={submitHandoff} disabled={handoffSubmitting}>
+              {handoffSubmitting ? "Handing off..." : "Hand off"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
+
+/**
+ * Renders any pending autonomy-driven approval requests tied to this run
+ * (tool_call rejections or cost-ceiling alerts). Hidden when empty so it
+ * doesn't add visual noise to runs the policy hasn't touched.
+ */
+function AutonomyApprovalsPanelStrip({ runId }: { runId: string }) {
+  const { data } = useQuery<{ approvals: { id: string }[] }>({
+    queryKey: ["run-approvals", runId],
+    queryFn: async () => {
+      const r = await fetch(`/api/autonomy/approvals?source_id=${encodeURIComponent(runId)}&limit=50`);
+      if (!r.ok) return { approvals: [] };
+      return r.json();
+    },
+    refetchInterval: 15_000,
+  });
+  if (!data?.approvals?.length) return null;
+  return (
+    <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+      <p className="text-xs uppercase tracking-wider text-amber-700 dark:text-amber-400">
+        Policy approvals on this run
+      </p>
+      <AutonomyApprovalsPanel filter={{ source_id: runId, limit: 50 }} />
+    </div>
+  );
+}
+

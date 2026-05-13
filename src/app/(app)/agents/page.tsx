@@ -13,6 +13,7 @@ import { Bot, Plus, Briefcase, Copy, Check, Terminal, ExternalLink, Loader2, Che
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
+import { PermissionModeSelect, PermissionBadge, type PermissionMode } from "@/components/app/permission-mode-select";
 
 type Agent = {
   id: string;
@@ -21,6 +22,7 @@ type Agent = {
   type: string;
   cli: string | null;
   model: string | null;
+  permission_mode: PermissionMode;
   job_count: number;
   waiting_count: number;
   pending_count: number;
@@ -35,10 +37,30 @@ type CliTool = {
   version?: string;
 };
 
-import { CLI_CONFIG } from "@/lib/cli-config";
+import { CLI_CONFIG, API_PRESETS } from "@/lib/cli-config";
+import { RoleGate } from "@/components/app/role-gate";
 import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
+import { ToolPermissionsEditor } from "@/components/app/tool-permissions";
+import type { ToolPermissions } from "@/lib/db/agents";
 import { Link2 } from "lucide-react";
+
+const DEFAULT_TOOL_PERMS_SAFE: ToolPermissions = {
+  read_docs: true, write_docs: true,
+  read_databases: true, write_databases: false,
+  read_env_vars: false,
+  create_runs: false, create_handoffs: false,
+  post_activity: true, update_status: true,
+  use_shell: false,
+};
+const DEFAULT_TOOL_PERMS_ALL: ToolPermissions = {
+  read_docs: true, write_docs: true,
+  read_databases: true, write_databases: true,
+  read_env_vars: true,
+  create_runs: true, create_handoffs: true,
+  post_activity: true, update_status: true,
+  use_shell: true,
+};
 
 export default function AgentsPage() {
   const queryClient = useQueryClient();
@@ -73,6 +95,14 @@ export default function AgentsPage() {
   const [selectedCli, setSelectedCli] = useState<string | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedThinking, setSelectedThinking] = useState<string>("");
+  const [shellCommand, setShellCommand] = useState("");
+  const [shellCwd, setShellCwd] = useState("");
+  const [shellDisplayLabel, setShellDisplayLabel] = useState("");
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("safe");
+  const [apiPresetId, setApiPresetId] = useState<string | null>(null);
+  const [apiBaseUrl, setApiBaseUrl] = useState("");
+  const [apiKeyEnv, setApiKeyEnv] = useState("");
+  const [toolPerms, setToolPerms] = useState<ToolPermissions>(DEFAULT_TOOL_PERMS_SAFE);
   const [showLinkExisting, setShowLinkExisting] = useState(false);
 
 
@@ -95,6 +125,24 @@ export default function AgentsPage() {
     const config = CLI_CONFIG[cliId];
     setSelectedModel(config?.models[0] || "");
     setSelectedThinking("");
+    // Default mode by provider — Claude and API agents default to safe;
+    // shell-capable CLIs (codex/gemini/shell) require the user to opt
+    // into the soft sandbox consciously.
+    const defaultMode: PermissionMode = (cliId === "claude" || cliId === "api") ? "safe" : "unrestricted";
+    setPermissionMode(defaultMode);
+    setToolPerms(defaultMode === "safe" ? DEFAULT_TOOL_PERMS_SAFE : DEFAULT_TOOL_PERMS_ALL);
+  }
+
+  function handleApiPresetSelect(presetId: string) {
+    const preset = API_PRESETS.find(p => p.id === presetId);
+    if (!preset) return;
+    setApiPresetId(presetId);
+    setSelectedCli("api");
+    setSelectedModel(preset.defaultModel);
+    setApiBaseUrl(preset.apiBaseUrl);
+    setApiKeyEnv(preset.defaultApiKeyEnv);
+    setPermissionMode("safe");
+    setToolPerms(DEFAULT_TOOL_PERMS_SAFE);
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -102,13 +150,35 @@ export default function AgentsPage() {
     if (!name.trim()) return;
     setCreating(true);
 
-    const body: Record<string, string | boolean> = { name, description };
+    const body: Record<string, unknown> = { name, description };
     if (agentType === "harbour") {
       body.type = "harbour";
       if (selectedCli && selectedCli !== "none") {
         body.cli = selectedCli;
-        body.model = selectedModel;
-        if (selectedThinking) body.thinking = selectedThinking;
+        if (selectedCli === "shell") {
+          if (!shellCommand.trim()) {
+            alert("Custom Shell agents require a non-empty command.");
+            setCreating(false);
+            return;
+          }
+          body.shellCommand = shellCommand.trim();
+          if (shellCwd.trim()) body.shellCwd = shellCwd.trim();
+          if (shellDisplayLabel.trim()) body.model = shellDisplayLabel.trim();
+        } else if (selectedCli === "api") {
+          if (!apiBaseUrl.trim() || !apiKeyEnv.trim()) {
+            alert("API agents require an apiBaseUrl and apiKeyEnv.");
+            setCreating(false);
+            return;
+          }
+          body.model = selectedModel;
+          body.apiBaseUrl = apiBaseUrl.trim();
+          body.apiKeyEnv = apiKeyEnv.trim();
+        } else {
+          body.model = selectedModel;
+          if (selectedThinking) body.thinking = selectedThinking;
+        }
+        body.permissionMode = permissionMode;
+        body.toolPermissions = toolPerms;
       }
       if (remoteAgent) body.remote = true;
       if (eagerAgent) body.eager = true;
@@ -119,6 +189,12 @@ export default function AgentsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Failed to create agent" }));
+      alert(err.error || "Failed to create agent");
+      setCreating(false);
+      return;
+    }
     if (res.ok) {
       const data = await res.json();
       setNewAgent({
@@ -184,6 +260,14 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
     setCliTools([]);
     setRemoteAgent(false);
     setEagerAgent(false);
+    setShellCommand("");
+    setShellCwd("");
+    setShellDisplayLabel("");
+    setPermissionMode("safe");
+    setApiPresetId(null);
+    setApiBaseUrl("");
+    setApiKeyEnv("");
+    setToolPerms(DEFAULT_TOOL_PERMS_SAFE);
   }
 
   function getConnectBlob() {
@@ -226,9 +310,11 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
               <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
             </Button>
           )}
-          <Button onClick={() => setShowCreate(true)} size="sm">
-            <Plus className="h-4 w-4 mr-1.5" /> New Agent
-          </Button>
+          <RoleGate action="mutateAgent">
+            <Button onClick={() => setShowCreate(true)} size="sm">
+              <Plus className="h-4 w-4 mr-1.5" /> New Agent
+            </Button>
+          </RoleGate>
         </div>
       </div>
 
@@ -262,6 +348,7 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                   {agent.type === "harbour" && agent.cli && (
                     <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{agent.cli}</span>
                   )}
+                  {agent.type === "harbour" && agent.permission_mode && <PermissionBadge mode={agent.permission_mode} />}
                 </div>
                 <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1"><Briefcase className="h-3 w-3" /> {agent.job_count} jobs</span>
@@ -397,6 +484,22 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                       <p className="text-xs text-muted-foreground">Jobs use workflow commands, no LLM</p>
                     </div>
                   </button>
+                  <div className="pt-2 mt-2 border-t">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">API agents (no shell access)</p>
+                    {API_PRESETS.map(preset => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => handleApiPresetSelect(preset.id)}
+                        className="w-full flex items-center gap-3 rounded-lg border p-3 text-left mb-2 transition-colors hover:border-primary hover:bg-muted/50 cursor-pointer"
+                      >
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{preset.displayName} API</p>
+                          <p className="text-xs text-muted-foreground">{preset.apiBaseUrl} · function-calling, no shell</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
               <DialogFooter>
@@ -414,15 +517,78 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
                 <Label htmlFor="agent-desc">Description</Label>
                 <Textarea id="agent-desc" value={description} onChange={e => setDescription(e.target.value)} placeholder="What does this agent do?" rows={2} />
               </div>
-              {agentType === "harbour" && selectedCli && selectedCli !== "none" && CLI_CONFIG[selectedCli] && (
-                <ModelThinkingSelect
-                  cli={selectedCli}
-                  model={selectedModel}
-                  thinking={selectedThinking}
-                  onModelChange={setSelectedModel}
-                  onThinkingChange={setSelectedThinking}
-                  defaultThinkingLabel="Default"
-                />
+              {agentType === "harbour" && selectedCli && selectedCli !== "none" && selectedCli !== "shell" && selectedCli !== "api" && CLI_CONFIG[selectedCli] && (
+                <>
+                  <ModelThinkingSelect
+                    cli={selectedCli}
+                    model={selectedModel}
+                    thinking={selectedThinking}
+                    onModelChange={setSelectedModel}
+                    onThinkingChange={setSelectedThinking}
+                    defaultThinkingLabel="Default"
+                  />
+                  <PermissionModeSelect
+                    cli={selectedCli}
+                    value={permissionMode}
+                    onChange={setPermissionMode}
+                  />
+                  <ToolPermissionsEditor cli={selectedCli} value={toolPerms} onChange={setToolPerms} />
+                </>
+              )}
+              {agentType === "harbour" && selectedCli === "api" && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="api-base">API base URL<span className="text-rose-500 ml-1">*</span></Label>
+                    <Input id="api-base" value={apiBaseUrl} onChange={e => setApiBaseUrl(e.target.value)} placeholder="https://api.deepseek.com/v1" required />
+                    <p className="text-xs text-muted-foreground">
+                      OpenAI-compatible <code>chat/completions</code> endpoint. {apiPresetId ? "Auto-filled from preset; edit if your deployment uses a different base." : null}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="api-model">Model<span className="text-rose-500 ml-1">*</span></Label>
+                    <Input id="api-model" value={selectedModel} onChange={e => setSelectedModel(e.target.value)} placeholder="deepseek-chat" required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="api-key-env">API key env var<span className="text-rose-500 ml-1">*</span></Label>
+                    <Input id="api-key-env" value={apiKeyEnv} onChange={e => setApiKeyEnv(e.target.value)} placeholder="DEEPSEEK_API_KEY" required />
+                    <p className="text-xs text-muted-foreground">
+                      The runner reads this env var to authenticate. Set it in the runner&apos;s environment (e.g. launchd plist or a shell profile) — Harbour never stores the key itself.
+                    </p>
+                  </div>
+                  <PermissionModeSelect cli="api" value={permissionMode} onChange={setPermissionMode} />
+                  <ToolPermissionsEditor cli="api" value={toolPerms} onChange={setToolPerms} />
+                </>
+              )}
+              {agentType === "harbour" && selectedCli === "shell" && (
+                <>
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 space-y-1">
+                    <p className="text-sm font-medium text-amber-700 dark:text-amber-400">⚠ Custom Shell agents run arbitrary commands</p>
+                    <p className="text-xs text-muted-foreground">
+                      The command below runs with the same privileges as the Harbour agent runner. Only use commands you fully control. Harbour pipes the run&apos;s prompt to your command&apos;s stdin and injects <code>HARBOUR_API_KEY</code> / <code>HARBOUR_URL</code> / <code>HARBOUR_RUN_ID</code> so your script can post status updates.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="shell-command">Shell command<span className="text-rose-500 ml-1">*</span></Label>
+                    <Textarea
+                      id="shell-command"
+                      value={shellCommand}
+                      onChange={e => setShellCommand(e.target.value)}
+                      placeholder='bash -lc "cat | node my-agent.js"'
+                      rows={3}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="shell-cwd">Working directory (optional)</Label>
+                    <Input id="shell-cwd" value={shellCwd} onChange={e => setShellCwd(e.target.value)} placeholder="~/agents/my-agent" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="shell-display">Display label (optional, shown in place of &lsquo;model&rsquo;)</Label>
+                    <Input id="shell-display" value={shellDisplayLabel} onChange={e => setShellDisplayLabel(e.target.value)} placeholder="my-agent v1" />
+                  </div>
+                  <PermissionModeSelect cli="shell" value={permissionMode} onChange={setPermissionMode} />
+                  <ToolPermissionsEditor cli="shell" value={toolPerms} onChange={setToolPerms} />
+                </>
               )}
               {agentType === "harbour" && (
                 <div className="rounded-md border p-3 space-y-2">

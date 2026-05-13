@@ -2,24 +2,37 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
-const HARBOUR_DIR = process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
-const RUNNERS_FILE = path.join(HARBOUR_DIR, "runners.json");
-const SESSIONS_FILE = path.join(HARBOUR_DIR, "sessions.json");
+// Paths are derived lazily so tests can swap HARBOUR_HOME between cases.
+function harbourDir() {
+  return process.env.HARBOUR_HOME || path.join(os.homedir(), ".harbour");
+}
+function runnersFile() { return path.join(harbourDir(), "runners.json"); }
+function sessionsFile() { return path.join(harbourDir(), "sessions.json"); }
+function runnerIntervalFile() { return path.join(harbourDir(), "runner-config.json"); }
+
+// Polling-interval bounds. The runner is invoked on a per-host scheduler
+// (launchd on macOS, systemd timer on Linux). Lower values reduce delay but
+// scale cost linearly — each tick may invoke the LLM.
+export const DEFAULT_POLL_INTERVAL_SECONDS = 60;
+export const MIN_POLL_INTERVAL_SECONDS = 5;
+export const MAX_POLL_INTERVAL_SECONDS = 3600;
 
 export function getHarbourDir() {
-  return HARBOUR_DIR;
+  return harbourDir();
 }
 
 export function ensureDir() {
-  if (!fs.existsSync(HARBOUR_DIR)) {
-    fs.mkdirSync(HARBOUR_DIR, { recursive: true });
+  const dir = harbourDir();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 
 export function loadRunnerConfigs() {
-  if (!fs.existsSync(RUNNERS_FILE)) return [];
+  const file = runnersFile();
+  if (!fs.existsSync(file)) return [];
   try {
-    return JSON.parse(fs.readFileSync(RUNNERS_FILE, "utf-8")).runners || [];
+    return JSON.parse(fs.readFileSync(file, "utf-8")).runners || [];
   } catch {
     return [];
   }
@@ -27,9 +40,10 @@ export function loadRunnerConfigs() {
 
 // Session tracking: run_id -> { sessionId, cli }
 export function loadSessions() {
-  if (!fs.existsSync(SESSIONS_FILE)) return {};
+  const file = sessionsFile();
+  if (!fs.existsSync(file)) return {};
   try {
-    return JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf-8"));
+    return JSON.parse(fs.readFileSync(file, "utf-8"));
   } catch {
     return {};
   }
@@ -37,7 +51,45 @@ export function loadSessions() {
 
 export function saveSessions(sessions) {
   ensureDir();
-  fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
+  fs.writeFileSync(sessionsFile(), JSON.stringify(sessions, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// Runner polling interval — per-host config that flows into the launchd plist
+// / systemd timer at install time. Stored at ~/.harbour/runner-config.json.
+// ---------------------------------------------------------------------------
+
+/** Load the polling interval. Returns DEFAULT when the file is missing,
+ *  corrupt, or out of range — so a manually-edited bad file never produces
+ *  an invalid unit file at install time. */
+export function loadRunnerInterval() {
+  const file = runnerIntervalFile();
+  if (!fs.existsSync(file)) return DEFAULT_POLL_INTERVAL_SECONDS;
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
+    const n = Number(raw?.pollIntervalSeconds);
+    if (!Number.isInteger(n) || n < MIN_POLL_INTERVAL_SECONDS || n > MAX_POLL_INTERVAL_SECONDS) {
+      return DEFAULT_POLL_INTERVAL_SECONDS;
+    }
+    return n;
+  } catch {
+    return DEFAULT_POLL_INTERVAL_SECONDS;
+  }
+}
+
+/** Convenience: same as loadRunnerInterval(). */
+export function getPollIntervalSeconds() {
+  return loadRunnerInterval();
+}
+
+/** Throws on out-of-range or non-integer input. */
+export function saveRunnerInterval(seconds) {
+  const n = Number(seconds);
+  if (!Number.isInteger(n) || n < MIN_POLL_INTERVAL_SECONDS || n > MAX_POLL_INTERVAL_SECONDS) {
+    throw new Error(`pollIntervalSeconds must be an integer between ${MIN_POLL_INTERVAL_SECONDS} and ${MAX_POLL_INTERVAL_SECONDS}`);
+  }
+  ensureDir();
+  fs.writeFileSync(runnerIntervalFile(), JSON.stringify({ pollIntervalSeconds: n }, null, 2));
 }
 
 export function listRunners() {

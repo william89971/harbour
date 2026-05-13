@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withAuth, withUserAuth, requireAgentOwnership } from "@/lib/auth";
-import { getRunById, requestKillRun, addRunActivity, isKillRequested } from "@/lib/db/queries";
+import { getRunByIdAsync, requestKillRunAsync, addRunActivityAsync, isKillRequestedAsync } from "@/lib/db/queries";
 
 /**
  * Lightweight kill-check endpoint for the runner's fallback poll. Returns
@@ -9,18 +9,18 @@ import { getRunById, requestKillRun, addRunActivity, isKillRequested } from "@/l
  */
 export const GET = withAuth(async (_req, auth, { params }) => {
   const { id } = await params;
-  const run = getRunById(id);
+  const run = await getRunByIdAsync(id);
   if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
-  const ownerError = requireAgentOwnership(auth, run.agent_id);
+  const ownerError = requireAgentOwnership(auth, run.agent_id as string | null);
   if (ownerError) return ownerError;
 
-  return NextResponse.json({ kill_requested: isKillRequested(id), status: run.status });
+  return NextResponse.json({ kill_requested: await isKillRequestedAsync(id), status: run.status });
 });
 
 export const POST = withUserAuth(async (_req, auth, { params }) => {
   const { id } = await params;
-  const run = getRunById(id);
+  const run = await getRunByIdAsync(id);
   if (!run) return NextResponse.json({ error: "Run not found" }, { status: 404 });
 
   if (run.agent_type !== "harbour") {
@@ -37,12 +37,12 @@ export const POST = withUserAuth(async (_req, auth, { params }) => {
     );
   }
 
-  const ok = requestKillRun(id);
+  const ok = await requestKillRunAsync(id);
   if (!ok) {
     return NextResponse.json({ error: "Failed to request kill" }, { status: 500 });
   }
 
-  addRunActivity(id, "system", null, "System", `Kill requested by **${auth.displayName}**`);
+  await addRunActivityAsync(id, "system", null, "System", `Kill requested by **${auth.displayName}**`);
 
   return NextResponse.json({ ok: true, kill_requested: true });
 });

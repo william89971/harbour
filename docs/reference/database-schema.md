@@ -24,6 +24,7 @@ Human accounts for dashboard auth.
 | `email` | TEXT | NN, U | |
 | `password_hash` | TEXT | NN | bcryptjs hash |
 | `display_name` | TEXT | NN | |
+| `role` | TEXT | NN, CHECK | one of `admin`, `operator`, `viewer`. Default `admin` (backwards-compat). RBAC gates wrap mutation routes in `src/lib/auth.ts`. |
 | `created_at` | INTEGER | NN | |
 | `updated_at` | INTEGER | NN | |
 
@@ -348,6 +349,172 @@ Optional view-layer grouping. Entities don't know about projects; the five `proj
 | `updated_at` | INTEGER | NN | |
 
 Junction tables: see [Junctions](#junctions-linking-tables). Auto-link behavior — adding a job to a project also links its agent, docs, env vars, and databases — lives in `src/lib/db/projects.ts` (`linkJobToProject`).
+
+## Handoffs
+
+### `run_handoffs`
+
+| Column | Type | Constraint | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | UUID |
+| `source_run_id` | TEXT | FK runs, SET NULL on delete | the run that initiated the handoff |
+| `source_agent_id` | TEXT | FK agents, SET NULL on delete | |
+| `target_agent_id` | TEXT | FK agents, SET NULL on delete | XOR with `target_team_id` at insert time |
+| `target_team_id` | TEXT | FK teams, SET NULL on delete | |
+| `target_role` | TEXT | nullable | preferred team role (e.g. `reviewer`) |
+| `target_job_id` | TEXT | FK jobs, SET NULL on delete | the one-off job created for the handoff |
+| `target_run_id` | TEXT | FK runs, SET NULL on delete | the new scheduled run created for the target |
+| `message` | TEXT | NN | required free-text message |
+| `source_run_name_snapshot` | TEXT | nullable | snapshot of source job name (preserved on source-run deletion) |
+| `source_agent_name_snapshot` | TEXT | nullable | snapshot of source agent name |
+| `status` | TEXT | NN, CHECK | one of `pending`, `accepted`, `completed`, `cancelled` |
+| `created_at`, `updated_at` | INTEGER | NN | unix epoch |
+
+Status transitions are driven by `updateRunStatus` against `target_run_id`:
+- `pending → accepted` when the target run transitions to `running`
+- `accepted → completed` when the target run reaches `done`
+- No auto-transition on `failed`/`killed`/`skipped` (source operator can see something's off)
+
+Indexes: `idx_run_handoffs_source(source_run_id)`, `idx_run_handoffs_target_run(target_run_id)`, `idx_run_handoffs_target_job(target_job_id)`.
+
+## Workflows (Company OS)
+
+Top-level pipelines of ordered steps with optional human approval gates. A workflow step, when its turn comes, creates a one-off job + run pair via the existing machinery; the only new runtime hook is in `updateRunStatusAsync` which calls `advanceWorkflowAfterRunAsync` on terminal status.
+
+### `workflows`
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | UUID |
+| `name` | TEXT | NN | |
+| `description` | TEXT | | |
+| `department` | TEXT | | freeform tag (Sales, Engineering, …) |
+| `status` | TEXT | NN, CHECK | `draft|active|paused|archived` |
+| `autonomy_level` | TEXT | NN, CHECK | `manual|supervised|autonomous`, default `supervised` |
+| `created_at`, `updated_at` | INTEGER | NN | |
+
+### `workflow_steps`
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | UUID |
+| `workflow_id` | TEXT | NN, FK → `workflows(id)` CASCADE | |
+| `step_order` | INTEGER | NN | sparse (10/20/30…) so reorder doesn't renumber |
+| `name` | TEXT | NN | |
+| `description` | TEXT | | |
+| `instructions` | TEXT | NN | supports `{{input.key}}` substitution at workflow-start time |
+| `assigned_agent_id` | TEXT | FK agents, SET NULL | XOR with `assigned_team_id` |
+| `assigned_team_id` | TEXT | FK teams, SET NULL | |
+| `preferred_role` | TEXT | | matches `jobs.preferred_role` |
+| `role_fallback` | TEXT | NN, CHECK | `any|wait`, default `any` |
+| `requires_human_approval` | INTEGER | NN | 0/1 — forces an approval gate regardless of autonomy |
+| `approval_type` | TEXT | NN, CHECK | `none|before_step|after_step` |
+| `risky` | INTEGER | NN | 0/1 — auto-set on create when instructions match risky keywords |
+| `timeout_minutes` | INTEGER | NN | default 30 |
+| `created_at`, `updated_at` | INTEGER | NN | |
+
+### `workflow_runs`
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | UUID |
+| `workflow_id` | TEXT | NN, FK → `workflows(id)` CASCADE | |
+| `status` | TEXT | NN, CHECK | `running|waiting_for_approval|done|failed|rejected` |
+| `current_step_id` | TEXT | FK workflow_steps, SET NULL | null when terminal |
+| `started_by_user_id` | TEXT | FK users, SET NULL | |
+| `input_payload` | TEXT | | JSON string, optional inputs passed at start |
+| `started_at`, `completed_at` | INTEGER | | |
+| `created_at`, `updated_at` | INTEGER | NN | |
+
+### `workflow_step_runs`
+
+One per (workflow_run, step) pair. Links the workflow layer to the underlying `runs.id`.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | UUID |
+| `workflow_run_id` | TEXT | NN, FK → `workflow_runs(id)` CASCADE | |
+| `step_id` | TEXT | NN, FK → `workflow_steps(id)` CASCADE | |
+| `step_order` | INTEGER | NN | denormalized for sort |
+| `job_id` | TEXT | FK jobs, SET NULL | null until the step spawns |
+| `run_id` | TEXT | FK runs, SET NULL | null until the step spawns; carries the underlying run |
+| `status` | TEXT | NN, CHECK | `pending|waiting_approval_before|running|waiting_approval_after|done|failed|skipped|rejected|needs_changes` |
+| `approval_user_id` | TEXT | FK users, SET NULL | |
+| `approval_at` | INTEGER | | |
+| `approval_comment` | TEXT | | for `needs_changes`, also stores reviewer's extra instructions appended on resume |
+| `created_at`, `updated_at` | INTEGER | NN | |
+
+### `workflow_run_activity`
+
+Append-only audit log for the workflow-level actions that don't naturally belong on the underlying `runs.activity` thread.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | UUID |
+| `workflow_run_id` | TEXT | NN, FK → `workflow_runs(id)` CASCADE | |
+| `step_run_id` | TEXT | FK workflow_step_runs, SET NULL | nullable for workflow-level entries (start/finish/comments) |
+| `author_type` | TEXT | NN | `user`/`system` |
+| `author_id`, `author_name` | TEXT | | |
+| `kind` | TEXT | NN, CHECK | `comment|approve|reject|request_changes|status|start|finish` |
+| `content` | TEXT | | |
+| `created_at` | INTEGER | NN | |
+
+Indexes: `idx_workflow_steps_workflow(workflow_id, step_order)`, `idx_workflow_runs_workflow(workflow_id)`, `idx_workflow_runs_status(status)`, `idx_workflow_step_runs_workflow_run(workflow_run_id, step_order)`, `idx_workflow_step_runs_run(run_id)`, `idx_workflow_run_activity_run(workflow_run_id, created_at)`.
+
+## Autonomy & approvals
+
+Declarative policies layered over the per-agent permission system. A single global "Default Safety Policy" is seeded on first init; scope-specific policies (agent / team / workflow / department) take priority in that order.
+
+### `autonomy_policies`
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | UUID, except the seeded global policy uses `ap_default_global` |
+| `name` | TEXT | NN | Display name |
+| `description` | TEXT | | |
+| `scope_type` | TEXT | NN, CHECK | `global|department|workflow|agent|team` |
+| `scope_id` | TEXT | | null for `global`; freeform string for `department`; FK-style id for the others (not enforced) |
+| `enabled` | INTEGER | NN, default 1 | 0 = ignored at resolution time |
+| `created_at`, `updated_at` | INTEGER | NN | |
+
+### `policy_rules`
+
+One rule per (policy, action_type). Unique constraint on the pair so upserts are idempotent.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | UUID |
+| `policy_id` | TEXT | NN, FK → `autonomy_policies(id)` CASCADE | |
+| `action_type` | TEXT | NN | One of: `send_email`, `send_message`, `contact_customer`, `spend_money`, `deploy_code`, `merge_pr`, `delete_data`, `modify_production`, `use_secret`, `external_api_call`, `create_handoff`, `update_status`, `custom` |
+| `risk_level` | TEXT | NN, CHECK | `low|medium|high|critical` |
+| `require_approval` | INTEGER | NN, default 0 | 1 = block; 0 = allow |
+| `max_cost_usd` | REAL | | Spend ceiling, only meaningful for `spend_money`. Null = no cap |
+| `allowed_roles` | TEXT | | JSON-encoded array of `UserRole`s permitted to initiate (advisory) |
+| `approval_roles` | TEXT | | JSON-encoded array of `UserRole`s permitted to approve (falls back to `approveAutonomy`) |
+| `created_at`, `updated_at` | INTEGER | NN | |
+
+Unique: `(policy_id, action_type)`.
+
+### `approval_requests`
+
+Pending and resolved approval records. Created automatically by the workflow gate, the cost-ceiling alert, and the api-agent tool gate.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | TEXT | PK | UUID |
+| `source_type` | TEXT | NN, CHECK | `run|workflow_run|workflow_step|tool_call|cost` |
+| `source_id` | TEXT | NN | Refers to the corresponding `runs.id` / `workflow_runs.id` / `workflow_step_runs.id` (not enforced via FK to allow soft deletes) |
+| `requested_by_agent_id` | TEXT | FK → `agents(id)` SET NULL | |
+| `action_type` | TEXT | NN | Same enum as `policy_rules.action_type` |
+| `risk_level` | TEXT | NN | Snapshot from the matching rule |
+| `reason` | TEXT | | Human-readable explanation; rendered in the approvals UI |
+| `payload_json` | TEXT | | JSON snapshot of relevant inputs (tool args, step info, cost figure) |
+| `status` | TEXT | NN, CHECK, default `pending` | `pending|approved|rejected|expired` |
+| `approved_by_user_id` | TEXT | FK → `users(id)` SET NULL | |
+| `approval_comment` | TEXT | | |
+| `created_at`, `resolved_at` | INTEGER | NN/nullable | |
+
+Indexes: `idx_autonomy_policies_scope(scope_type, scope_id, enabled)`, `idx_policy_rules_policy(policy_id)`, `idx_approval_requests_status(status, created_at)`, `idx_approval_requests_source(source_type, source_id)`.
 
 ## FK graph
 

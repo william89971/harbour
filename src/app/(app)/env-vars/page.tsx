@@ -12,6 +12,7 @@ import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 import { useProjectFilter, useActiveProjectId } from "@/lib/hooks/use-project-filter";
 import { ProjectLinkDialog } from "@/components/app/project-link-dialog";
+import { RoleGate } from "@/components/app/role-gate";
 
 type EnvVar = { id: string; name: string; pinned: number; created_at: number; updated_at: number };
 
@@ -81,7 +82,9 @@ export default function EnvVarsPage() {
               <Link2 className="h-4 w-4 mr-1.5" /> Add Existing
             </Button>
           )}
-          <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Env Var</Button>
+          <RoleGate action="manageEnvVars">
+            <Button size="sm" onClick={() => setShowNew(true)}><Plus className="h-4 w-4 mr-1" /> New Env Var</Button>
+          </RoleGate>
         </div>
       </div>
 
