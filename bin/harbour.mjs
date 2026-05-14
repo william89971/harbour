@@ -13,6 +13,10 @@ import {
   MAX_POLL_INTERVAL_SECONDS,
 } from "./lib/config.mjs";
 import { connectAgent } from "./lib/connect.mjs";
+import { installBrief, uninstallBrief, briefStatus } from "./lib/brief.mjs";
+import { installWeeklyReview, uninstallWeeklyReview, weeklyReviewStatus } from "./lib/weekly-review.mjs";
+import { installProductReview, uninstallProductReview, productReviewStatus } from "./lib/product-review.mjs";
+import { installGrowthOutreach, uninstallGrowthOutreach, growthOutreachStatus } from "./lib/growth-outreach.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
@@ -35,6 +39,31 @@ Usage:
   harbour agent status       Show install state, timer status, and log commands
   harbour agent interval [N] Show or set the runner polling interval in seconds
                              (range 5..3600, default 60). Re-run install to apply.
+  harbour brief install      Install the Daily Founder Brief workflow-only job
+                             (requires HARBOUR_ADMIN_API_KEY in env).
+  harbour brief uninstall    Remove the brief job and script.
+  harbour brief status       Show whether the brief script is installed.
+  harbour weekly-review install
+                             Install the Weekly Review workflow-only job
+                             (requires HARBOUR_ADMIN_API_KEY in env).
+  harbour weekly-review uninstall
+                             Remove the weekly review job and script.
+  harbour weekly-review status
+                             Show whether the weekly review script is installed.
+  harbour product-review install
+                             Install the Product Review Loop built-in workflow
+                             (requires HARBOUR_ADMIN_API_KEY in env).
+  harbour product-review uninstall
+                             Remove the Product Review Loop workflow and agent.
+  harbour product-review status
+                             Show whether the product-review script is installed.
+  harbour growth-outreach install
+                             Install the Growth Outreach Loop workflow + agent
+                             (requires HARBOUR_ADMIN_API_KEY in env).
+  harbour growth-outreach uninstall
+                             Remove the Growth Outreach Loop workflow and agent.
+  harbour growth-outreach status
+                             Show whether the growth-outreach script is installed.
   `.trim());
 }
 
@@ -104,6 +133,78 @@ async function main() {
         }
         default:
           console.error(`Unknown agent command: ${subcommand}`);
+          usage();
+          process.exit(1);
+      }
+      break;
+    }
+    case "brief": {
+      switch (subcommand) {
+        case "install":
+          await installBrief();
+          break;
+        case "uninstall":
+          await uninstallBrief();
+          break;
+        case "status":
+          briefStatus();
+          break;
+        default:
+          console.error(`Unknown brief command: ${subcommand}`);
+          usage();
+          process.exit(1);
+      }
+      break;
+    }
+    case "weekly-review": {
+      switch (subcommand) {
+        case "install":
+          await installWeeklyReview();
+          break;
+        case "uninstall":
+          await uninstallWeeklyReview();
+          break;
+        case "status":
+          weeklyReviewStatus();
+          break;
+        default:
+          console.error(`Unknown weekly-review command: ${subcommand}`);
+          usage();
+          process.exit(1);
+      }
+      break;
+    }
+    case "product-review": {
+      switch (subcommand) {
+        case "install":
+          await installProductReview();
+          break;
+        case "uninstall":
+          await uninstallProductReview();
+          break;
+        case "status":
+          productReviewStatus();
+          break;
+        default:
+          console.error(`Unknown product-review command: ${subcommand}`);
+          usage();
+          process.exit(1);
+      }
+      break;
+    }
+    case "growth-outreach": {
+      switch (subcommand) {
+        case "install":
+          await installGrowthOutreach();
+          break;
+        case "uninstall":
+          await uninstallGrowthOutreach();
+          break;
+        case "status":
+          growthOutreachStatus();
+          break;
+        default:
+          console.error(`Unknown growth-outreach command: ${subcommand}`);
           usage();
           process.exit(1);
       }

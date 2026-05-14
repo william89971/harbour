@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Trash2, Plus, Copy, Check } from "lucide-react";
 import { useApp } from "@/components/app/app-context";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { CLI_CONFIG } from "@/lib/cli-config";
 import { ModelThinkingSelect, SELECT_CLASS } from "@/components/app/model-thinking-select";
 import { AutonomyApprovalsPanel } from "@/components/app/autonomy-approvals-panel";
@@ -152,6 +153,240 @@ function VideoProcessingSettings({ settings, updateSetting }: { settings: Settin
         </div>
       )}
     </div>
+  );
+}
+
+function GitHubIntegrationSettings() {
+  const queryClient = useQueryClient();
+  const { data: config } = useQuery<{
+    owner: string; repo: string; defaultBranch: string; tokenEnvVarName: string; tokenConfigured: boolean;
+  } | null>({
+    queryKey: ["github-config"],
+    queryFn: async () => {
+      const res = await fetch("/api/integrations/github/config");
+      if (!res.ok) return null;
+      return res.json();
+    },
+  });
+
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  async function saveField(key: "owner" | "repo" | "defaultBranch" | "tokenEnvVarName", value: string) {
+    const res = await fetch("/api/integrations/github/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [key]: value.trim() }),
+    });
+    if (res.ok) queryClient.invalidateQueries({ queryKey: ["github-config"] });
+  }
+
+  async function handleTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/integrations/github/summary");
+      const json = await res.json();
+      if (!res.ok) {
+        setTestResult({ ok: false, message: json.error || `HTTP ${res.status}` });
+      } else if (!json.configured) {
+        setTestResult({ ok: false, message: "Not configured — fill in the fields above first." });
+      } else if (json.errors && json.errors.length > 0) {
+        setTestResult({ ok: false, message: json.errors[0] });
+      } else if (json.repo) {
+        setTestResult({ ok: true, message: `Connected to ${json.repo.full_name}` });
+      } else {
+        setTestResult({ ok: false, message: "Unknown response shape." });
+      }
+    } catch (err) {
+      setTestResult({ ok: false, message: (err as Error).message });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const owner = config?.owner ?? "";
+  const repo = config?.repo ?? "";
+  const defaultBranch = config?.defaultBranch ?? "";
+  const tokenEnvVarName = config?.tokenEnvVarName ?? "GITHUB_TOKEN";
+  const tokenConfigured = !!config?.tokenConfigured;
+
+  return (
+    <RoleGate
+      action="manageGlobalSettings"
+      fallback={
+        <div className="rounded-lg border p-4 space-y-2 opacity-60">
+          <Label className="text-base font-medium">GitHub</Label>
+          <p className="text-xs text-muted-foreground">Admin-only. Configured by an admin elsewhere.</p>
+        </div>
+      }
+    >
+      <div className="rounded-lg border p-4 space-y-4">
+        <div>
+          <Label className="text-base font-medium">GitHub</Label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Read-only repo awareness. Store the token in <Link href="/env-vars" className="underline">Env Vars</Link> and reference it by name here. No mutations are performed.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Owner</Label>
+            <Input defaultValue={owner} placeholder="geekforbrains" onBlur={e => saveField("owner", e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Repo</Label>
+            <Input defaultValue={repo} placeholder="harbour" onBlur={e => saveField("repo", e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Default branch</Label>
+            <Input defaultValue={defaultBranch} placeholder="main" onBlur={e => saveField("defaultBranch", e.target.value)} />
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <Label className="text-xs">Token env var name</Label>
+          <Input
+            defaultValue={tokenEnvVarName}
+            placeholder="GITHUB_TOKEN"
+            onBlur={e => saveField("tokenEnvVarName", e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            {tokenConfigured
+              ? <>Env var <span className="font-mono">{tokenEnvVarName}</span> is set. Plaintext is never exposed.</>
+              : <>No env var named <span className="font-mono">{tokenEnvVarName}</span> found. <Link href="/env-vars" className="underline">Create one</Link> first.</>
+            }
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={handleTest} disabled={testing}>
+            {testing ? "Testing..." : "Test connection"}
+          </Button>
+          {testResult && (
+            <span className={`text-xs ${testResult.ok ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"}`}>
+              {testResult.ok ? "✓ " : "✗ "}{testResult.message}
+            </span>
+          )}
+        </div>
+      </div>
+    </RoleGate>
+  );
+}
+
+function GmailIntegrationSettings() {
+  const queryClient = useQueryClient();
+  const { data: config } = useQuery<{
+    clientIdEnvVarName: string;
+    clientSecretEnvVarName: string;
+    refreshTokenEnvVarName: string;
+    fromEmail: string;
+    configured: boolean;
+    tokenConfigured: boolean;
+  } | null>({
+    queryKey: ["gmail-config"],
+    queryFn: async () => {
+      const r = await fetch("/api/integrations/gmail/config");
+      if (!r.ok) return null;
+      return r.json();
+    },
+  });
+
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  async function saveField(key: "clientIdEnvVarName" | "clientSecretEnvVarName" | "refreshTokenEnvVarName" | "fromEmail", value: string) {
+    const r = await fetch("/api/integrations/gmail/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [key]: value.trim() }),
+    });
+    if (r.ok) queryClient.invalidateQueries({ queryKey: ["gmail-config"] });
+  }
+
+  async function handleTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await fetch("/api/integrations/gmail/test", { method: "POST" });
+      setTestResult(await r.json());
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const cid = config?.clientIdEnvVarName ?? "GMAIL_CLIENT_ID";
+  const cs = config?.clientSecretEnvVarName ?? "GMAIL_CLIENT_SECRET";
+  const rt = config?.refreshTokenEnvVarName ?? "GMAIL_REFRESH_TOKEN";
+  const fromEmail = config?.fromEmail ?? "";
+
+  return (
+    <RoleGate
+      action="manageGlobalSettings"
+      fallback={
+        <div className="rounded-lg border p-4 space-y-2 opacity-60">
+          <Label className="text-base font-medium">Gmail</Label>
+          <p className="text-xs text-muted-foreground">Admin-only.</p>
+        </div>
+      }
+    >
+      <div className="rounded-lg border p-4 space-y-4">
+        <div>
+          <Label className="text-base font-medium">Gmail</Label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Creates Gmail drafts (never sends). Store the three OAuth env vars in{" "}
+            <Link href="/env-vars" className="underline">Env Vars</Link>. Generate the refresh token via the{" "}
+            <a
+              href="https://developers.google.com/oauthplayground/"
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              Google OAuth Playground
+            </a>{" "}
+            with scope <span className="font-mono">https://www.googleapis.com/auth/gmail.modify</span>.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Client ID env var</Label>
+            <Input defaultValue={cid} onBlur={e => saveField("clientIdEnvVarName", e.target.value)} placeholder="GMAIL_CLIENT_ID" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Client Secret env var</Label>
+            <Input defaultValue={cs} onBlur={e => saveField("clientSecretEnvVarName", e.target.value)} placeholder="GMAIL_CLIENT_SECRET" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Refresh Token env var</Label>
+            <Input defaultValue={rt} onBlur={e => saveField("refreshTokenEnvVarName", e.target.value)} placeholder="GMAIL_REFRESH_TOKEN" />
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <Label className="text-xs">From email</Label>
+          <Input defaultValue={fromEmail} onBlur={e => saveField("fromEmail", e.target.value)} placeholder="you@yourdomain.com" type="email" />
+          <p className="text-xs text-muted-foreground">
+            {config?.tokenConfigured
+              ? <>Env vars detected.{" "}{config.configured ? "Ready to test." : "Set the from email to enable drafts."}</>
+              : <>One or more env vars not found. <Link href="/env-vars" className="underline">Create them</Link> first.</>
+            }
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={handleTest} disabled={testing}>
+            {testing ? "Testing..." : "Test connection"}
+          </Button>
+          {testResult && testResult.ok && (
+            <span className="text-xs text-emerald-700 dark:text-emerald-400">✓ Connected</span>
+          )}
+          {testResult && !testResult.ok && (
+            <span className="text-xs text-rose-700 dark:text-rose-400">✗ {testResult.error ?? "Failed"}</span>
+          )}
+        </div>
+      </div>
+    </RoleGate>
   );
 }
 
@@ -470,6 +705,12 @@ export default function SettingsPage() {
             />
           </div>
         </div>
+
+        {/* GitHub */}
+        <GitHubIntegrationSettings />
+
+        {/* Gmail */}
+        <GmailIntegrationSettings />
 
         {/* Video Processing */}
         <VideoProcessingSettings settings={settings || {}} updateSetting={updateSetting} />

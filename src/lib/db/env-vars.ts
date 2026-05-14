@@ -163,6 +163,21 @@ export async function getEnvVarDecryptedValueAsync(id: string): Promise<string |
   return decrypt(row.encrypted_value);
 }
 
+export async function getEnvVarByNameAsync(name: string) {
+  const db = await getDbAsync();
+  return db.get<{ id: string; name: string; pinned: number; created_at: number; updated_at: number }>(
+    `SELECT id, name, pinned, created_at, updated_at FROM env_vars WHERE name = ?`,
+    [name],
+  );
+}
+
+export async function getDecryptedEnvVarValueByNameAsync(name: string): Promise<string | null> {
+  const db = await getDbAsync();
+  const row = await db.get<{ encrypted_value: string }>(`SELECT encrypted_value FROM env_vars WHERE name = ?`, [name]);
+  if (!row) return null;
+  return decrypt(row.encrypted_value);
+}
+
 export async function listPinnedEnvVarIdsAsync(): Promise<string[]> {
   const db = await getDbAsync();
   const rows = await db.all<{ id: string }>(`SELECT id FROM env_vars WHERE pinned = 1`);

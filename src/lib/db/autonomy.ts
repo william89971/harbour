@@ -378,6 +378,45 @@ export async function listApprovalRequestsAsync(filter: ListApprovalFilter = {})
   );
 }
 
+export type ApprovalRequestWithAgent = ApprovalRequestRow & {
+  requested_by_agent_name: string | null;
+};
+
+/** Same as listApprovalRequestsAsync but LEFT JOINs the agents table to
+ *  include the requesting agent's display name. Drives the Approval Inbox
+ *  so the operator can see who asked for the gate. */
+export async function listApprovalRequestsWithAgentAsync(filter: ListApprovalFilter = {}): Promise<ApprovalRequestWithAgent[]> {
+  const db = await getDbAsync();
+  const where: string[] = [];
+  const values: (string | number)[] = [];
+  if (filter.status) { where.push("r.status = ?"); values.push(filter.status); }
+  if (filter.sourceType) { where.push("r.source_type = ?"); values.push(filter.sourceType); }
+  if (filter.sourceId) { where.push("r.source_id = ?"); values.push(filter.sourceId); }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const limit = filter.limit && filter.limit > 0 ? Math.min(filter.limit, 1000) : 200;
+  return await db.all<ApprovalRequestWithAgent>(
+    `SELECT r.*, a.name AS requested_by_agent_name
+     FROM approval_requests r
+     LEFT JOIN agents a ON a.id = r.requested_by_agent_id
+     ${whereSql}
+     ORDER BY r.created_at DESC
+     LIMIT ${limit}`,
+    values,
+  );
+}
+
+export async function countApprovalRequestsAsync(filter: ListApprovalFilter = {}): Promise<number> {
+  const db = await getDbAsync();
+  const where: string[] = [];
+  const values: (string | number)[] = [];
+  if (filter.status) { where.push("status = ?"); values.push(filter.status); }
+  if (filter.sourceType) { where.push("source_type = ?"); values.push(filter.sourceType); }
+  if (filter.sourceId) { where.push("source_id = ?"); values.push(filter.sourceId); }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const row = await db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM approval_requests ${whereSql}`, values);
+  return Number(row?.n ?? 0);
+}
+
 /**
  * Resolve a pending approval request. The status must currently be 'pending';
  * any other status returns null so concurrent clicks observe a 409 cleanly.

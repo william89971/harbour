@@ -95,6 +95,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     enabled: !!user,
   });
 
+  // Pending approvals count for the Approvals nav badge.
+  const { data: pendingApprovalsCount = 0 } = useQuery({
+    queryKey: ["approvals-count"],
+    queryFn: async () => {
+      const res = await fetch("/api/autonomy/approvals/count?status=pending");
+      if (!res.ok) return 0;
+      const data = await res.json();
+      return Number(data.count ?? 0);
+    },
+    refetchInterval: 15_000,
+    enabled: !!user,
+  });
+
+  // Pending outreach count for the Outreach nav badge.
+  const { data: pendingOutreachCount = 0 } = useQuery({
+    queryKey: ["outreach", "pending-count"],
+    queryFn: async () => {
+      const res = await fetch("/api/outreach?status=pending_approval");
+      if (!res.ok) return 0;
+      const data = await res.json();
+      return Array.isArray(data) ? data.length : 0;
+    },
+    refetchInterval: 30_000,
+    enabled: !!user,
+  });
+
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
@@ -139,7 +165,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <AppContext.Provider value={{ user, waitingCount, timezone, projects, activeProjectId, setActiveProjectId }}>
+    <AppContext.Provider value={{ user, waitingCount, pendingApprovalsCount, pendingOutreachCount, timezone, projects, activeProjectId, setActiveProjectId }}>
       <div className="flex h-dvh standalone:h-screen">
         <aside className="hidden w-56 shrink-0 border-r bg-sidebar md:block">
           {sidebar}

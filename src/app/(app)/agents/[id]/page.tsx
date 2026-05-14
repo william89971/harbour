@@ -28,6 +28,7 @@ import { ToolPermissionsEditor } from "@/components/app/tool-permissions";
 import type { ToolPermissions } from "@/lib/db/agents";
 import { agentInfoRows } from "@/components/app/agent-info-rows";
 import { ShieldAlert } from "lucide-react";
+import { AgentScorecardCard } from "@/components/app/agent-scorecard-card";
 
 type Agent = { id: string; name: string; description: string | null; type: string; cli: string | null; model: string | null; thinking: string | null; remote: number | null; eager: number | null; permission_mode: PermissionMode; last_polled_at: number | null; created_at: number };
 type Job = { id: string; name: string; description: string | null; schedule: string; active: number; total_runs: number; waiting_runs: number; pending_runs: number; skipped_runs: number; last_run_at: number | null; workflow_command: string | null; workflow_only: number };
@@ -416,6 +417,9 @@ The guide covers everything: polling, scheduling, run lifecycle, docs, databases
           </div>
         </section>
       )}
+
+      {/* Scorecard */}
+      <AgentScorecardCard agentId={id} />
 
       {/* Recent Runs */}
       <section>

@@ -9,8 +9,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { BackLink } from "@/components/app/back-link";
-import { Pencil, Save, X, Trash2, History, Pin } from "lucide-react";
+import { Pencil, Save, X, Trash2, History, Pin, MoreHorizontal } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 
@@ -112,18 +118,30 @@ export default function DocDetailPage() {
             </>
           ) : (
             <>
-              <Button variant={doc.pinned ? "default" : "outline"} size="icon" className="h-8 w-8" onClick={handleTogglePin} title={doc.pinned ? "Unpin" : "Pin to all jobs"}>
-                <Pin className="h-3.5 w-3.5" />
+              <Button variant="outline" size="sm" className="h-8" onClick={() => setEditing(true)}>
+                <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit
               </Button>
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={loadRevisions} title="Revisions">
-                <History className="h-3.5 w-3.5" />
-              </Button>
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setEditing(true)} title="Edit">
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
-              <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleDelete} title="Delete">
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" className="h-8 w-8" title="More actions">
+                    <MoreHorizontal className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuItem onSelect={() => void handleTogglePin()}>
+                    <Pin className="h-3.5 w-3.5 mr-2" />
+                    {doc.pinned ? "Unpin" : "Pin to jobs"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void loadRevisions()}>
+                    <History className="h-3.5 w-3.5 mr-2" />
+                    Revisions
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void handleDelete()} className="text-destructive focus:text-destructive">
+                    <Trash2 className="h-3.5 w-3.5 mr-2" />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           )}
         </div>

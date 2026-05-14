@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Bot, Plus, Briefcase, Copy, Check, Terminal, ExternalLink, Loader2, CheckCircle, XCircle } from "lucide-react";
+import { Bot, Plus, Briefcase, Copy, Check, Terminal, ExternalLink, Loader2, CheckCircle, XCircle, Gauge } from "lucide-react";
 import { timeAgo } from "@/lib/time";
 import { EmptyState } from "@/components/app/empty-state";
 import { ModelThinkingSelect } from "@/components/app/model-thinking-select";
@@ -305,6 +305,12 @@ Do NOT copy the guide into memory — fetch it each time so you always have the 
           <p className="text-sm text-muted-foreground mt-1">Your AI workforce.</p>
         </div>
         <div className="flex gap-2">
+          <Link
+            href="/agents/scorecards"
+            className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm hover:bg-accent transition-colors"
+          >
+            <Gauge className="h-4 w-4" /> Scorecards
+          </Link>
           {activeProjectId && (
             <Button variant="outline" size="sm" onClick={() => setShowLinkExisting(true)}>
               <Link2 className="h-4 w-4 mr-1.5" /> Add Existing

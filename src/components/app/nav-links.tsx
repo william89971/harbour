@@ -7,6 +7,7 @@ import {
   Activity,
   Briefcase,
   Bot,
+  CalendarCheck,
   FileText,
   Database,
   KeyRound,
@@ -17,22 +18,40 @@ import {
   DollarSign,
   Workflow,
   LayoutDashboard,
+  Target,
+  CheckSquare,
+  Scale,
+  GitBranch,
+  Inbox,
+  Building2,
+  Send,
+  Mail,
 } from "lucide-react";
 
 export function NavLinks({ onClick }: { onClick?: () => void }) {
   const pathname = usePathname();
-  const { waitingCount } = useApp();
+  const { waitingCount, pendingApprovalsCount, pendingOutreachCount } = useApp();
 
   const links = [
-    { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/", label: "Today", icon: LayoutDashboard, badge: waitingCount },
+    { href: "/weekly-reviews", label: "Weekly", icon: CalendarCheck },
     { href: "/captain", label: "Captain", icon: MessageSquare },
-    { href: "/", label: "Runs", icon: Activity, badge: waitingCount },
+    { href: "/approvals", label: "Approvals", icon: Inbox, badge: pendingApprovalsCount },
+    { href: "/runs", label: "Runs", icon: Activity },
     { href: "/workflows", label: "Workflows", icon: Workflow },
     { href: "/jobs", label: "Jobs", icon: Briefcase },
     { href: "/agents", label: "Agents", icon: Bot },
     { href: "/teams", label: "Teams", icon: Users2 },
     { href: "/docs", label: "Docs", icon: FileText },
+    { href: "/goals", label: "Goals", icon: Target },
+    { href: "/tasks", label: "Tasks", icon: CheckSquare },
+    { href: "/decisions", label: "Decisions", icon: Scale },
     { href: "/databases", label: "Databases", icon: Database },
+    { href: "/contacts", label: "Contacts", icon: Users },
+    { href: "/companies", label: "Companies", icon: Building2 },
+    { href: "/outreach", label: "Outreach", icon: Send, badge: pendingOutreachCount },
+    { href: "/integrations/github", label: "GitHub", icon: GitBranch },
+    { href: "/integrations/gmail", label: "Gmail", icon: Mail },
     { href: "/env-vars", label: "Env Vars", icon: KeyRound },
     { href: "/users", label: "Users", icon: Users },
     { href: "/usage", label: "Usage", icon: DollarSign },
@@ -43,7 +62,7 @@ export function NavLinks({ onClick }: { onClick?: () => void }) {
     <nav className="flex flex-col gap-0.5 px-2">
       {links.map((link) => {
         const isActive = link.href === "/"
-          ? pathname === "/" || pathname.startsWith("/runs")
+          ? pathname === "/"
           : pathname.startsWith(link.href);
         return (
           <Link

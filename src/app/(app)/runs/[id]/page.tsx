@@ -17,6 +17,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { RoleGate } from "@/components/app/role-gate";
 import { AutonomyApprovalsPanel } from "@/components/app/autonomy-approvals-panel";
+import { SaveAsMenu } from "@/components/app/save-as-menu";
+import { RunFeedback } from "@/components/app/run-feedback";
 
 type HandoffSummary = {
   id: string;
@@ -813,6 +815,9 @@ export default function RunDetailPage() {
         </div>
       )}
 
+      {/* Per-run feedback */}
+      <RunFeedback runId={id} />
+
       {/* Activity Log */}
       <div className="space-y-1">
         <SectionHeader>Activity</SectionHeader>
@@ -835,6 +840,11 @@ export default function RunDetailPage() {
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium">{entry.author_name}</span>
                       <span className="text-xs text-muted-foreground">{timeAgo(entry.created_at)}</span>
+                      {entry.content && (
+                        <div className="ml-auto">
+                          <SaveAsMenu content={entry.content} context={{ runId: id }} />
+                        </div>
+                      )}
                     </div>
                     {entry.content && (
                       <div className="prose prose-sm dark:prose-invert max-w-none mt-0.5 text-sm">

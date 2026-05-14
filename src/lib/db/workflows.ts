@@ -928,6 +928,37 @@ export async function listWorkflowRunsAsync(workflowId?: string): Promise<Workfl
   return db.all<WorkflowRunRow>(`SELECT * FROM workflow_runs ORDER BY created_at DESC LIMIT 100`);
 }
 
+export type WorkflowRunWithNames = WorkflowRunRow & {
+  workflow_name: string | null;
+  current_step_name: string | null;
+};
+
+export async function listWorkflowRunsByStatusesAsync(
+  statuses: WorkflowRunStatus[],
+  opts: { sinceTs?: number; limit?: number } = {},
+): Promise<WorkflowRunWithNames[]> {
+  if (statuses.length === 0) return [];
+  const db = await getDbAsync();
+  const placeholders = statuses.map(() => "?").join(", ");
+  const params: (string | number)[] = [...statuses];
+  let sinceClause = "";
+  if (opts.sinceTs !== undefined) {
+    sinceClause = " AND (wr.completed_at IS NOT NULL AND wr.completed_at >= ?)";
+    params.push(opts.sinceTs);
+  }
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
+  return db.all<WorkflowRunWithNames>(
+    `SELECT wr.*, w.name AS workflow_name, s.name AS current_step_name
+     FROM workflow_runs wr
+     LEFT JOIN workflows w ON w.id = wr.workflow_id
+     LEFT JOIN workflow_steps s ON s.id = wr.current_step_id
+     WHERE wr.status IN (${placeholders})${sinceClause}
+     ORDER BY wr.updated_at DESC
+     LIMIT ${limit}`,
+    params,
+  );
+}
+
 export async function listWorkflowStepRunsAsync(workflowRunId: string): Promise<WorkflowStepRunRow[]> {
   const db = await getDbAsync();
   return db.all<WorkflowStepRunRow>(

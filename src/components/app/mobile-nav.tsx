@@ -10,6 +10,7 @@ import {
   Activity,
   Briefcase,
   Bot,
+  CalendarCheck,
   FileText,
   Database,
   KeyRound,
@@ -33,6 +34,7 @@ export function MobileBottomNav() {
   ];
 
   const moreLinks = [
+    { href: "/weekly-reviews", label: "Weekly", icon: CalendarCheck },
     { href: "/docs", label: "Docs", icon: FileText },
     { href: "/databases", label: "Databases", icon: Database },
     { href: "/env-vars", label: "Env Vars", icon: KeyRound },

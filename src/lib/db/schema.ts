@@ -353,6 +353,20 @@ export function initializeSchema(db: Database.Database) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
 
+    -- Run feedback: per-run useful/not_useful/neutral ratings from operators.
+    -- One row per (run, user) — UPSERT semantics for re-rating.
+    CREATE TABLE IF NOT EXISTS run_feedback (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      rating TEXT NOT NULL
+        CHECK(rating IN ('useful','not_useful','neutral')),
+      comment TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(run_id, created_by_user_id)
+    );
+
     -- Projects: optional organizational grouping (view layer only)
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
@@ -589,6 +603,88 @@ export function initializeSchema(db: Database.Database) {
       resolved_at INTEGER
     );
 
+    -- Company OS: durable direction (goals), outstanding work (tasks), history (decisions).
+    CREATE TABLE IF NOT EXISTS goals (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      notes TEXT,
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active','paused','completed','archived')),
+      priority TEXT NOT NULL DEFAULT 'medium'
+        CHECK(priority IN ('low','medium','high')),
+      target_date INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      notes TEXT,
+      status TEXT NOT NULL DEFAULT 'todo'
+        CHECK(status IN ('todo','doing','blocked','done','archived')),
+      priority TEXT NOT NULL DEFAULT 'medium'
+        CHECK(priority IN ('low','medium','high')),
+      owner_type TEXT NOT NULL DEFAULT 'none'
+        CHECK(owner_type IN ('user','agent','none')),
+      owner_id TEXT,
+      goal_id TEXT REFERENCES goals(id) ON DELETE SET NULL,
+      due_date INTEGER,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS decisions (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      decision TEXT NOT NULL,
+      rationale TEXT,
+      consequences TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    -- Growth Outreach Loop: prospects, accounts, drafted outreach.
+    CREATE TABLE IF NOT EXISTS companies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      website TEXT,
+      industry TEXT,
+      status TEXT NOT NULL DEFAULT 'prospect'
+        CHECK(status IN ('prospect','customer','partner','archived')),
+      notes TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS contacts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT,
+      company_id TEXT REFERENCES companies(id) ON DELETE SET NULL,
+      title TEXT,
+      source TEXT,
+      status TEXT NOT NULL DEFAULT 'new'
+        CHECK(status IN ('new','researched','drafted','contacted','replied','archived')),
+      notes TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS outreach_drafts (
+      id TEXT PRIMARY KEY,
+      contact_id TEXT REFERENCES contacts(id) ON DELETE SET NULL,
+      company_id TEXT REFERENCES companies(id) ON DELETE SET NULL,
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft'
+        CHECK(status IN ('draft','pending_approval','approved','sent','rejected','archived')),
+      created_by_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+      approval_request_id TEXT REFERENCES approval_requests(id) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_attachment_processing_attachment ON attachment_processing(attachment_id);
     CREATE INDEX IF NOT EXISTS idx_attachment_processing_run ON attachment_processing(run_id);
@@ -602,6 +698,8 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_run_attachments_run ON run_attachments(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_attachments_activity ON run_attachments(activity_id);
     CREATE INDEX IF NOT EXISTS idx_run_costs_run ON run_costs(run_id);
+    CREATE INDEX IF NOT EXISTS idx_run_feedback_run ON run_feedback(run_id);
+    CREATE INDEX IF NOT EXISTS idx_run_feedback_rating ON run_feedback(rating);
     CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id);
     CREATE INDEX IF NOT EXISTS idx_database_migrations_db ON database_migrations(database_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_schedule ON jobs(agent_id, active, next_run_at);
@@ -629,6 +727,17 @@ export function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_policy_rules_policy ON policy_rules(policy_id);
     CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status, created_at);
     CREATE INDEX IF NOT EXISTS idx_approval_requests_source ON approval_requests(source_type, source_id);
+
+    CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_goal ON tasks(goal_id);
+    CREATE INDEX IF NOT EXISTS idx_decisions_created ON decisions(created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_contacts_company ON contacts(company_id);
+    CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
+    CREATE INDEX IF NOT EXISTS idx_companies_status ON companies(status);
+    CREATE INDEX IF NOT EXISTS idx_outreach_status ON outreach_drafts(status);
+    CREATE INDEX IF NOT EXISTS idx_outreach_contact ON outreach_drafts(contact_id);
   `);
 
   // Migrations: drop agent_id from docs (now top-level)

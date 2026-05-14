@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withUserAuth } from "@/lib/auth";
-import { listApprovalRequestsAsync } from "@/lib/db/queries";
+import { listApprovalRequestsWithAgentAsync } from "@/lib/db/queries";
 import { APPROVAL_STATUSES, APPROVAL_SOURCE_TYPES, type ApprovalSourceType, type ApprovalStatus } from "@/lib/autonomy/constants";
 
 export const GET = withUserAuth(async (req) => {
@@ -23,6 +23,6 @@ export const GET = withUserAuth(async (req) => {
     const n = parseInt(limitParam, 10);
     if (!Number.isNaN(n) && n > 0) filter.limit = n;
   }
-  const approvals = await listApprovalRequestsAsync(filter);
+  const approvals = await listApprovalRequestsWithAgentAsync(filter);
   return NextResponse.json({ approvals });
 });

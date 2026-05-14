@@ -13,6 +13,9 @@ import { EmptyState } from "@/components/app/empty-state";
 import { SectionHeader } from "@/components/app/section-header";
 import { RoleGate } from "@/components/app/role-gate";
 import { AutonomyApprovalsPanel } from "@/components/app/autonomy-approvals-panel";
+import { ProductReviewProposalPanel } from "@/components/app/product-review-proposal-panel";
+import { GrowthOutreachProposalPanel } from "@/components/app/growth-outreach-proposal-panel";
+import { SaveAsMenu } from "@/components/app/save-as-menu";
 
 type StepRow = { id: string; step_order: number; name: string; instructions: string; approval_type: string };
 type StepRun = {
@@ -173,6 +176,14 @@ export default function WorkflowRunDetailPage() {
         )}
       </section>
 
+      {run.status === "waiting_for_approval" && currentStepRun && currentStepRun.run_id && run.workflow.name === "Product Review Loop" && (
+        <ProductReviewProposalPanel workflowRunId={run.id} underlyingRunId={currentStepRun.run_id} />
+      )}
+
+      {run.status === "waiting_for_approval" && currentStepRun && currentStepRun.run_id && run.workflow.name === "Growth Outreach Loop" && (
+        <GrowthOutreachProposalPanel workflowRunId={run.id} underlyingRunId={currentStepRun.run_id} />
+      )}
+
       {run.status === "waiting_for_approval" && currentStepRun && (
         <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
           <div className="flex items-center gap-2">
@@ -240,6 +251,9 @@ export default function WorkflowRunDetailPage() {
                       <span className="text-xs font-medium">{a.author_name ?? a.author_type}</span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{a.kind.replace(/_/g, " ")}</span>
                       <span className="text-xs text-muted-foreground ml-auto">{timeAgo(a.created_at)}</span>
+                      {a.content && (
+                        <SaveAsMenu content={a.content} context={{ workflowRunId: run.id, workflowName: run.workflow.name }} />
+                      )}
                     </div>
                     {a.content && <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{a.content}</p>}
                   </div>

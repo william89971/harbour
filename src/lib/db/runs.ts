@@ -853,6 +853,76 @@ export async function listRecentRunsAsync(limit = 10, projectId?: string) {
   `, projectId ? [projectId, limit] : [limit]);
 }
 
+export async function listCompletedTodayAsync(sinceTs: number, projectId?: string) {
+  const db = await getDbAsync();
+  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
+  const params: (string | number)[] = projectId ? [sinceTs, projectId] : [sinceTs];
+  return db.all(`
+    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
+    FROM runs r
+    JOIN jobs j ON r.job_id = j.id
+    LEFT JOIN agents a ON r.agent_id = a.id
+    WHERE r.status = 'done' AND r.completed_at IS NOT NULL AND r.completed_at >= ? ${projectFilter}
+    ORDER BY r.completed_at DESC
+  `, params);
+}
+
+export async function listSkippedTodayAsync(sinceTs: number, projectId?: string) {
+  const db = await getDbAsync();
+  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
+  const params: (string | number)[] = projectId ? [sinceTs, projectId] : [sinceTs];
+  return db.all(`
+    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
+    FROM runs r
+    JOIN jobs j ON r.job_id = j.id
+    LEFT JOIN agents a ON r.agent_id = a.id
+    WHERE r.status = 'skipped' AND r.completed_at IS NOT NULL AND r.completed_at >= ? ${projectFilter}
+    ORDER BY r.completed_at DESC
+  `, params);
+}
+
+export async function listCompletedBetweenAsync(startTs: number, endTs: number, projectId?: string) {
+  const db = await getDbAsync();
+  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
+  const params: (string | number)[] = projectId ? [startTs, endTs, projectId] : [startTs, endTs];
+  return db.all(`
+    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
+    FROM runs r
+    JOIN jobs j ON r.job_id = j.id
+    LEFT JOIN agents a ON r.agent_id = a.id
+    WHERE r.status = 'done' AND r.completed_at IS NOT NULL AND r.completed_at >= ? AND r.completed_at < ? ${projectFilter}
+    ORDER BY r.completed_at DESC
+  `, params);
+}
+
+export async function listFailedBetweenAsync(startTs: number, endTs: number, projectId?: string) {
+  const db = await getDbAsync();
+  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
+  const params: (string | number)[] = projectId ? [startTs, endTs, projectId] : [startTs, endTs];
+  return db.all(`
+    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
+    FROM runs r
+    JOIN jobs j ON r.job_id = j.id
+    LEFT JOIN agents a ON r.agent_id = a.id
+    WHERE r.status IN ('failed', 'killed') AND r.completed_at IS NOT NULL AND r.completed_at >= ? AND r.completed_at < ? ${projectFilter}
+    ORDER BY r.completed_at DESC
+  `, params);
+}
+
+export async function listFailedSinceAsync(sinceTs: number, projectId?: string) {
+  const db = await getDbAsync();
+  const projectFilter = projectId ? `AND r.job_id IN (SELECT job_id FROM project_jobs WHERE project_id = ?)` : "";
+  const params: (string | number)[] = projectId ? [sinceTs, projectId] : [sinceTs];
+  return db.all(`
+    SELECT r.*, j.name as job_name, j.active as job_active, j.workflow_command as job_workflow_command, j.workflow_only as job_workflow_only, a.name as agent_name
+    FROM runs r
+    JOIN jobs j ON r.job_id = j.id
+    LEFT JOIN agents a ON r.agent_id = a.id
+    WHERE r.status IN ('failed', 'killed') AND r.completed_at IS NOT NULL AND r.completed_at >= ? ${projectFilter}
+    ORDER BY r.completed_at DESC
+  `, params);
+}
+
 export async function addRunActivityAsync(runId: string, authorType: string, authorId: string | null, authorName: string, content: string) {
   const db = await getDbAsync();
   const id = uuid();

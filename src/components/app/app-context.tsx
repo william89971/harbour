@@ -8,6 +8,8 @@ export type Project = { id: string; name: string; created_at: number; updated_at
 export type AppContextType = {
   user: User | null;
   waitingCount: number;
+  pendingApprovalsCount: number;
+  pendingOutreachCount: number;
   timezone: string;
   projects: Project[];
   activeProjectId: string | null;
@@ -17,6 +19,8 @@ export type AppContextType = {
 export const AppContext = createContext<AppContextType>({
   user: null,
   waitingCount: 0,
+  pendingApprovalsCount: 0,
+  pendingOutreachCount: 0,
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   projects: [],
   activeProjectId: null,
